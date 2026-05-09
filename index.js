@@ -15,7 +15,7 @@ import {
   BUTTON_TYPE_SIDEBAR,
 } from './src/pluginRouter';
 import CopilotOverlay from './src/native/CopilotOverlay';
-import {debugLog} from './src/diagnostics/log';
+import {debugLog, infoLog} from './src/diagnostics/log';
 import {captureCurrentPage} from './src/scope/captureScreenshot';
 import {setPageContextPromise} from './src/scope/pageContext';
 
@@ -86,9 +86,7 @@ subscribeToButtonEvents(async event => {
   if (event.id !== BUTTON_ID_SIDEBAR) {
     return;
   }
-  debugLog(
-    `[COPILOT] sidebar pressed; scope=${SCOPE_LABEL_FOR_SIDEBAR}`,
-  );
+  infoLog(`[COPILOT] sidebar pressed; scope=${SCOPE_LABEL_FOR_SIDEBAR}`);
 
   // Fire-and-forget capture. The promise is handed to the
   // pageContext singleton and we proceed immediately so the popup

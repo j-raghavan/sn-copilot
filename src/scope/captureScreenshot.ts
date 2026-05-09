@@ -10,6 +10,7 @@
 // gracefully to text-only mode without claiming context it doesn't
 // have.
 
+import {infoLog} from '../diagnostics/log';
 import {arrayBufferToBase64} from './base64';
 import type {PageContext} from './pageContext';
 
@@ -310,6 +311,13 @@ const captureNotePage = async (
       `bytes=${png.byteLength} base64.length=${png.base64.length} ` +
       `pageText.length=${pageText.length}`,
   );
+  // Survives __DEV__=false so a logcat from a shipped build still
+  // tells us "did capture work, did OCR yield text". No note path.
+  infoLog(
+    `${TAG} capture-note kind=note page=${page} ` +
+      `pngBytes=${png.byteLength} base64.length=${png.base64.length} ` +
+      `pageText.length=${pageText.length}`,
+  );
   return {
     notePath,
     page,
@@ -367,6 +375,11 @@ const captureDocPage = async (
   logger.log(
     `${TAG} captured doc=${docPath} page=${page} ` +
       `bytes=${png.byteLength} base64.length=${png.base64.length} ` +
+      `pageText.length=${pageText.length}`,
+  );
+  infoLog(
+    `${TAG} capture-doc kind=doc page=${page} ` +
+      `pngBytes=${png.byteLength} base64.length=${png.base64.length} ` +
       `pageText.length=${pageText.length}`,
   );
   return {

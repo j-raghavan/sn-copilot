@@ -33,7 +33,7 @@ import {
 } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import CopilotOverlay from '../native/CopilotOverlay';
-import {debugLog} from '../diagnostics/log';
+import {debugLog, infoLog} from '../diagnostics/log';
 import {redactPii} from '../privacy/redact';
 import {tryAcquire, release} from '../reentrancy/inFlightGuard';
 import {getPageContext} from '../scope/pageContext';
@@ -178,6 +178,16 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       const userText = piiOn ? redactPii(composed) : composed;
       const allowImage = keyFile === undefined || keyFile.mode === 'image';
       const imageBase64 = allowImage ? ctx?.screenshotBase64 : undefined;
+      // Survives prod bundles. Tells us at a glance whether the
+      // payload had the bits the model needs to answer.
+      infoLog(
+        `[COPILOT_CHAT] send piiOn=${piiOn} ` +
+          `keyFileMode=${keyFile?.mode ?? 'fake'} ` +
+          `allowImage=${allowImage} ` +
+          `imageAttached=${imageBase64 !== undefined} ` +
+          `userText.length=${userText.length} ` +
+          `pageText.length=${ctx?.pageText.length ?? 0}`,
+      );
       const r = await client.send(
         {
           systemPrompt: SYSTEM_PROMPT,
@@ -188,9 +198,9 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         },
         {apiKey, model},
       );
-      debugLog(
-        `[COPILOT_CHAT] response received latencyMs=${r.latencyMs} ` +
-          `text.length=${r.text.length}`,
+      infoLog(
+        `[COPILOT_CHAT] response latencyMs=${r.latencyMs} ` +
+          `text.length=${r.text.length} model=${r.modelId}`,
       );
       setMessages(curr => {
         // Replace the trailing thinking placeholder with the AI msg.

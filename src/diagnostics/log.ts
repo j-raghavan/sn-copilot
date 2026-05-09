@@ -1,17 +1,25 @@
-// __DEV__-gated console.log wrapper for verbose diagnostic lines.
+// Two diagnostic helpers with different visibility profiles.
 //
-// Production bundles set __DEV__ to false at compile time (Metro /
-// Babel), so these calls collapse to no-ops in shipped builds. Use
-// it for path/length/identifying metadata that's helpful in dev but
-// shouldn't end up in logs shared from a user's device.
+// debugLog — __DEV__-gated. Collapses to a no-op in production
+// bundles (Metro builds with --dev false set __DEV__ to false). Use
+// for chatty per-event logs whose signal isn't worth shipping.
+//
+// infoLog — always emits via console.warn so the line survives
+// production bundles and lands in logcat. Use for the small set of
+// "what just happened on this user action" lines we want available
+// for support/diagnosis. Don't pass note paths or other identifying
+// data — keep it to lengths, counts, and booleans.
 //
 // Errors and actionable warnings should keep using console.warn /
-// console.error directly — those signals matter regardless of build
-// type.
+// console.error directly.
 
 export const debugLog = (...args: unknown[]): void => {
   if (typeof __DEV__ !== 'undefined' && __DEV__ === false) {
     return;
   }
   console.log(...args);
+};
+
+export const infoLog = (...args: unknown[]): void => {
+  console.warn(...args);
 };
