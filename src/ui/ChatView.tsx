@@ -42,6 +42,7 @@ import {composeUserText} from './composePrompt';
 import {buildMarkdownStyles} from './markdownStyles';
 import {markdownToPlainText} from './markdownToPlain';
 import {sanitizeProviderError} from './sanitizeProviderError';
+import SetupChecklist from './SetupChecklist';
 import {SYSTEM_PROMPT} from './systemPrompt';
 import {useProviderClient} from './useProviderClient';
 
@@ -114,6 +115,12 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   } = props;
 
   const {client, apiKey, model} = useProviderClient(keyFile);
+
+  // No key file → block all send paths and show the setup checklist
+  // in the empty area. Without this gate the chat silently routes to
+  // fakeProvider, which returns canned demo replies that LOOK like
+  // real model output and send users on a wild goose chase.
+  const hasKeyFile = keyFile !== undefined;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState<string>('');
@@ -236,16 +243,22 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
 
   const onQuickActionTap = useCallback(
     (action: QuickActionId) => {
+      if (!hasKeyFile) {
+        return;
+      }
       // QuickActionId is a closed union — the find always matches.
       const def = QUICK_ACTIONS.find(a => a.id === action) as (typeof QUICK_ACTIONS)[number];
       sendUserMessage(def.prompt);
     },
-    [sendUserMessage],
+    [hasKeyFile, sendUserMessage],
   );
 
   const onSendInput = useCallback(() => {
+    if (!hasKeyFile) {
+      return;
+    }
     sendUserMessage(input);
-  }, [input, sendUserMessage]);
+  }, [hasKeyFile, input, sendUserMessage]);
 
   // Per-bubble copy. The bubble renders the LLM's markdown source
   // through react-native-markdown-display; the clipboard, however,
@@ -380,24 +393,29 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       </View>
 
       {/* Quick action row — explicit gap via `gap` style; each button
-          flex-shrinks gracefully on narrower devices. */}
+          flex-shrinks gracefully on narrower devices. Disabled when
+          no key file is configured so the user can't tap into the
+          fakeProvider canned-response trap. */}
       <View style={styles.quickActionRow}>
-        {QUICK_ACTIONS.map(a => (
-          <TouchableOpacity
-            key={a.id}
-            testID={`chat-action-${a.id}`}
-            accessibilityLabel={a.label}
-            onPress={() => onQuickActionTap(a.id)}
-            disabled={busy}
-            style={[styles.quickActionBtn, busy && styles.btnDisabled]}>
-            <Text style={styles.quickActionIcon} numberOfLines={1}>
-              {a.icon}
-            </Text>
-            <Text style={styles.quickActionLabel} numberOfLines={1}>
-              {a.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {QUICK_ACTIONS.map(a => {
+          const disabled = busy || !hasKeyFile;
+          return (
+            <TouchableOpacity
+              key={a.id}
+              testID={`chat-action-${a.id}`}
+              accessibilityLabel={a.label}
+              onPress={() => onQuickActionTap(a.id)}
+              disabled={disabled}
+              style={[styles.quickActionBtn, disabled && styles.btnDisabled]}>
+              <Text style={styles.quickActionIcon} numberOfLines={1}>
+                {a.icon}
+              </Text>
+              <Text style={styles.quickActionLabel} numberOfLines={1}>
+                {a.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {/* Privacy caution. The page screenshot + transcribed text
@@ -411,12 +429,20 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
 
       <View style={styles.divider} />
 
-      {/* Chat scroll */}
+      {/* Chat scroll. Three states stack here:
+          - no key file → onboarding checklist (blocks quick actions),
+          - key file but no messages yet → idle hint,
+          - key file with messages → bubbles. */}
       <ScrollView
         testID="chat-scroll"
         style={styles.chatScroll}
         contentContainerStyle={styles.chatContent}>
-        {messages.length === 0 ? (
+        {!hasKeyFile ? (
+          <SetupChecklist
+            testID="chat-setup-checklist"
+            headline="No API key configured. Copilot needs a key file in MyStyle/SnCopilot/ before the quick actions and chat can talk to a real model."
+          />
+        ) : messages.length === 0 ? (
           <Text testID="chat-empty" style={styles.emptyHint}>
             Tap a quick action above, or ask a question below.
           </Text>
@@ -436,25 +462,28 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
 
       <View style={styles.divider} />
 
-      {/* Input + send */}
+      {/* Input + send — disabled when no key file is configured. */}
       <View style={styles.inputRow}>
         <TextInput
           testID="chat-input"
           accessibilityLabel="Ask about this page"
           value={input}
           onChangeText={setInput}
-          placeholder="Ask about this page…"
-          editable={!busy}
+          placeholder={
+            hasKeyFile ? 'Ask about this page…' : 'Add a key in Settings →'
+          }
+          editable={!busy && hasKeyFile}
           style={styles.input}
         />
         <TouchableOpacity
           testID="chat-send"
           accessibilityLabel="Send"
           onPress={onSendInput}
-          disabled={busy || input.trim().length === 0}
+          disabled={busy || input.trim().length === 0 || !hasKeyFile}
           style={[
             styles.sendBtn,
-            (busy || input.trim().length === 0) && styles.btnDisabled,
+            (busy || input.trim().length === 0 || !hasKeyFile) &&
+              styles.btnDisabled,
           ]}>
           <Text style={styles.sendBtnText}>{'➤'}</Text>
         </TouchableOpacity>

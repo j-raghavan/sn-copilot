@@ -14,6 +14,7 @@ import {discoverKeyFiles, type FileUtilsLike} from '../storage/keyFiles';
 import {resolveActiveProvider} from '../storage/activeProvider';
 import {createProviderClient} from '../providers';
 import type {KeyFile, ProviderId, ProviderResolution} from '../types';
+import SetupChecklist from './SetupChecklist';
 
 export type SettingsViewProps = {
   onClose: () => void;
@@ -246,28 +247,6 @@ export default function SettingsView(
   );
 }
 
-// First-run setup walkthrough shown when no key file resolves. Kept
-// content-equivalent to the README's Quick Start so a user who never
-// reads the README can still get the chat working.
-const SETUP_STEPS: Array<{title: string; body: string}> = [
-  {
-    title: 'Pick a provider',
-    body: 'Anthropic, OpenAI, Google Gemini, or DeepSeek. Grab an API key from their console.',
-  },
-  {
-    title: 'Create the folder',
-    body: '/MyStyle/SnCopilot/ on your Supernote (USB sync, WebDAV, or Cloud — whatever you already use).',
-  },
-  {
-    title: 'Add the key file',
-    body: 'Save copilot-key-<provider>.txt in that folder with three lines: provider=, model=, and key=<your API key>. Templates live in the templates/ folder of the GitHub repo.',
-  },
-  {
-    title: 'Tap Refresh',
-    body: 'Hit "Refresh from disk" below — Copilot picks up the file without restarting.',
-  },
-];
-
 function KeyFileBlock({
   resolution,
 }: {
@@ -275,28 +254,10 @@ function KeyFileBlock({
 }): React.JSX.Element {
   if (resolution.kind === 'none') {
     return (
-      <View testID="settings-resolution-none" style={styles.noKeyBlock}>
-        <Text style={styles.noKeyText}>{resolution.message}</Text>
-        {SETUP_STEPS.map((step, i) => (
-          <View
-            key={i}
-            testID={`settings-setup-step-${i + 1}`}
-            style={styles.stepRow}>
-            <Text style={styles.stepNum}>{i + 1}.</Text>
-            <View style={styles.stepBody}>
-              <Text style={styles.stepTitle}>{step.title}</Text>
-              <Text style={styles.stepText}>{step.body}</Text>
-            </View>
-          </View>
-        ))}
-        <Text style={styles.noKeyHint}>
-          Filename tolerance:{' '}
-          <Text style={styles.mono}>copilot-key-claude.txt</Text> →
-          anthropic;{' '}
-          <Text style={styles.mono}>copilot-key-google.txt</Text> →
-          gemini.
-        </Text>
-      </View>
+      <SetupChecklist
+        testID="settings-resolution-none"
+        headline={resolution.message}
+      />
     );
   }
   if (resolution.kind === 'ambiguous') {
@@ -403,32 +364,6 @@ const styles = StyleSheet.create({
     color: '#000000',
     marginTop: 8,
     marginBottom: 4,
-  },
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: 6,
-  },
-  stepNum: {
-    fontSize: 14,
-    color: '#000000',
-    fontWeight: '600',
-    width: 22,
-    paddingTop: 1,
-  },
-  stepBody: {
-    flex: 1,
-  },
-  stepTitle: {
-    fontSize: 14,
-    color: '#000000',
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  stepText: {
-    fontSize: 13,
-    color: '#000000',
-    lineHeight: 18,
   },
   mono: {
     fontFamily: 'monospace',

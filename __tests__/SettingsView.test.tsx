@@ -84,12 +84,12 @@ describe('SettingsView — discovery: no key files', () => {
     });
     expect(findByTestID(tree, 'settings-resolution-none')).toBeDefined();
     // Numbered steps 1-4 are individually findable.
-    expect(findByTestID(tree, 'settings-setup-step-1')).toBeDefined();
-    expect(findByTestID(tree, 'settings-setup-step-2')).toBeDefined();
-    expect(findByTestID(tree, 'settings-setup-step-3')).toBeDefined();
-    expect(findByTestID(tree, 'settings-setup-step-4')).toBeDefined();
+    expect(findByTestID(tree, 'setup-step-1')).toBeDefined();
+    expect(findByTestID(tree, 'setup-step-2')).toBeDefined();
+    expect(findByTestID(tree, 'setup-step-3')).toBeDefined();
+    expect(findByTestID(tree, 'setup-step-4')).toBeDefined();
     // No 5th step.
-    expect(maybeFindByTestID(tree, 'settings-setup-step-5')).toBeNull();
+    expect(maybeFindByTestID(tree, 'setup-step-5')).toBeNull();
 
     const text = findAllText(tree).join(' | ');
     // Step content checkpoints — each checklist item lands on screen.

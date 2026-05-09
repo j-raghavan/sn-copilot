@@ -17,12 +17,31 @@
  */
 const fakeProviderModule = jest.requireActual('../src/providers/fakeProvider');
 
+// Force every render to route through fakeProvider regardless of the
+// keyFile.provider value the test passes. The send/redact/image-gate
+// logic in ChatView reads keyFile.provider directly to decide what
+// goes on the wire — independent of which client actually carries
+// the call — so spying on fakeProvider.send still tells us
+// everything we need to assert about the payload.
+jest.mock('../src/ui/useProviderClient', () => ({
+  useProviderClient: (keyFile: {key?: string; model?: string} | undefined) => {
+    const fakeProvider =
+      jest.requireActual('../src/providers/fakeProvider').default;
+    return {
+      client: fakeProvider,
+      apiKey: keyFile?.key ?? 'fake',
+      model: keyFile?.model ?? 'fake-model-1',
+    };
+  },
+}));
+
 jest.useFakeTimers();
 
 import React from 'react';
 import {act, create, ReactTestRenderer} from 'react-test-renderer';
 import ChatView from '../src/ui/ChatView';
 import {__testing__ as guardTesting} from '../src/reentrancy/inFlightGuard';
+import type {KeyFile} from '../src/types';
 import {
   findAllText,
   findByTestID,
@@ -34,6 +53,15 @@ beforeEach(() => {
   guardTesting.reset();
 });
 
+// Default keyFile so render() exercises the keyed flow. Tests that
+// want the no-key state pass keyFile: undefined explicitly.
+const DEFAULT_KEYFILE: KeyFile = {
+  provider: 'anthropic',
+  model: 'claude-haiku-4-5',
+  key: 'sk-ant-test',
+  sourcePath: '/sd/copilot-key-anthropic.txt',
+};
+
 function render(overrides: Partial<React.ComponentProps<typeof ChatView>> = {}) {
   const onSettingsTap = jest.fn();
   const onClose = jest.fn();
@@ -43,6 +71,7 @@ function render(overrides: Partial<React.ComponentProps<typeof ChatView>> = {}) 
       <ChatView
         scopeLabel="Current Page"
         provider="Claude"
+        keyFile={DEFAULT_KEYFILE}
         onSettingsTap={onSettingsTap}
         onClose={onClose}
         {...overrides}
@@ -73,7 +102,7 @@ async function flushFakeProvider(): Promise<void> {
 }
 
 describe('ChatView — initial render', () => {
-  it('shows header, context, all four quick actions, PII row, insert row, input', () => {
+  it('shows header, context, all four quick actions, privacy note, empty hint, input', () => {
     const {tree} = render();
     expect(findByTestID(tree, 'chat-view')).toBeDefined();
     expect(findByTestID(tree, 'chat-close')).toBeDefined();
@@ -90,7 +119,13 @@ describe('ChatView — initial render', () => {
       'Avoid sharing sensitive info',
     );
 
+    // With a keyFile, the empty-hint shows and the setup checklist
+    // is hidden — quick actions are usable.
     expect(findByTestID(tree, 'chat-empty')).toBeDefined();
+    expect(maybeFindByTestID(tree, 'chat-setup-checklist')).toBeNull();
+    expect(findByTestID(tree, 'chat-action-summarize').props.disabled).toBe(
+      false,
+    );
 
     // Font controls are deliberately hidden until the first AI reply
     // arrives — there's nothing to scale yet.
@@ -154,10 +189,9 @@ describe('ChatView — quick action flow', () => {
     // After resolve: thinking gone, AI msg has the canned summary.
     const text = findAllText(tree).join(' | ');
     expect(text).toContain('Notes are too long to skim');
-    // Without a key file (default render), ChatView falls back to
-    // fakeProvider, which echoes the model passed to it; we pass
-    // 'fake-model-1' as the demo model.
-    expect(text).toContain('fake-model-1');
+    // fakeProvider echoes the model passed to it. With the default
+    // keyFile the model is the keyFile.model.
+    expect(text).toContain(DEFAULT_KEYFILE.model);
   });
 
   it('Explain action sends "Explain this page"', async () => {
@@ -644,45 +678,69 @@ describe('ChatView — pageContext composition', () => {
   });
 });
 
-describe('ChatView — keyFile prop wires real provider client', () => {
-  it('uses createProviderClient when keyFile is provided', async () => {
-    // Mock fetch — Anthropic-shaped response.
-    const fetchSpy = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        content: [{type: 'text', text: 'real reply'}],
-        usage: {input_tokens: 1, output_tokens: 2},
-        model: 'claude-haiku-4-5',
-      }),
-      text: async () => '',
-    });
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+// Routing keyFile.provider → real provider client is covered by
+// __tests__/useProviderClient.test.tsx. ChatView tests use a mocked
+// useProviderClient that always returns fakeProvider, so the
+// keyFile-to-client wiring is exercised at the unit level.
+
+describe('ChatView — no key file: setup checklist + disabled actions', () => {
+  it('shows the chat setup checklist instead of the empty hint when keyFile is undefined', () => {
+    const {tree} = render({keyFile: undefined});
+    expect(findByTestID(tree, 'chat-setup-checklist')).toBeDefined();
+    expect(maybeFindByTestID(tree, 'chat-empty')).toBeNull();
+    // All four checklist steps are visible.
+    expect(findByTestID(tree, 'setup-step-1')).toBeDefined();
+    expect(findByTestID(tree, 'setup-step-2')).toBeDefined();
+    expect(findByTestID(tree, 'setup-step-3')).toBeDefined();
+    expect(findByTestID(tree, 'setup-step-4')).toBeDefined();
+  });
+
+  it('disables the four quick-action buttons and the send button', () => {
+    const {tree} = render({keyFile: undefined});
+    expect(findByTestID(tree, 'chat-action-summarize').props.disabled).toBe(
+      true,
+    );
+    expect(findByTestID(tree, 'chat-action-explain').props.disabled).toBe(
+      true,
+    );
+    expect(findByTestID(tree, 'chat-action-clarify').props.disabled).toBe(
+      true,
+    );
+    expect(findByTestID(tree, 'chat-action-snapshot').props.disabled).toBe(
+      true,
+    );
+    expect(findByTestID(tree, 'chat-send').props.disabled).toBe(true);
+    // Input is read-only, with a "go to Settings" placeholder.
+    expect(findByTestID(tree, 'chat-input').props.editable).toBe(false);
+    expect(findByTestID(tree, 'chat-input').props.placeholder).toContain(
+      'Settings',
+    );
+  });
+
+  it('quick-action onPress is a no-op when no key file is configured', async () => {
+    const fp = require('../src/providers/fakeProvider').default;
+    const sendSpy = jest.spyOn(fp, 'send');
     try {
-      const {tree} = render({
-        keyFile: {
-          provider: 'anthropic',
-          model: 'claude-haiku-4-5',
-          key: 'sk-ant-real',
-          mode: 'text',
-          sourcePath: '/x/copilot-key-anthropic.txt',
-        },
-      });
+      const {tree} = render({keyFile: undefined});
       act(() => {
         findByTestID(tree, 'chat-action-summarize').props.onPress();
       });
       await flushFakeProvider();
-      expect(fetchSpy).toHaveBeenCalled();
-      const [url, init] = fetchSpy.mock.calls[0];
-      expect(url).toBe('https://api.anthropic.com/v1/messages');
-      expect((init.headers as Record<string, string>)['x-api-key']).toBe(
-        'sk-ant-real',
-      );
-      const text = findAllText(tree).join(' | ');
-      expect(text).toContain('real reply');
+      expect(sendSpy).not.toHaveBeenCalled();
+      // No user/thinking/assistant bubble was appended either.
+      expect(maybeFindByTestID(tree, 'chat-empty')).toBeNull();
+      expect(findByTestID(tree, 'chat-setup-checklist')).toBeDefined();
     } finally {
-      globalThis.fetch = originalFetch;
+      sendSpy.mockRestore();
     }
+  });
+
+  it('Settings cog still works while disabled (so users can land where the key goes)', () => {
+    const {tree, onSettingsTap} = render({keyFile: undefined});
+    act(() => {
+      findByTestID(tree, 'chat-settings').props.onPress();
+    });
+    expect(onSettingsTap).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -748,17 +806,13 @@ describe('ChatView — provider-driven image gate', () => {
 
   it('text-only provider (deepseek) sends redacted text and no image', async () => {
     seedContext();
-    const fetchSpy = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        choices: [{message: {content: 'ok'}}],
-        usage: {prompt_tokens: 1, completion_tokens: 1},
-        model: 'deepseek-chat',
-      }),
-      text: async () => '',
+    const fp = require('../src/providers/fakeProvider').default;
+    const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
+      text: 'ok',
+      usage: {inputTokens: 1, outputTokens: 1},
+      latencyMs: 1,
+      modelId: 'deepseek-chat',
     });
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
     try {
       const {tree} = render({
         keyFile: {
@@ -777,20 +831,20 @@ describe('ChatView — provider-driven image gate', () => {
         findByTestID(tree, 'chat-send').props.onPress();
       });
       await flushFakeProvider();
-      expect(fetchSpy).toHaveBeenCalled();
-      const [, init] = fetchSpy.mock.calls[0];
-      const body = JSON.parse(init.body as string);
-      const serialized = JSON.stringify(body);
+      const sentReq = sendSpy.mock.calls[0][0] as {
+        userText: string;
+        imageBase64?: string;
+      };
       // No image bytes leak through on a text-only provider.
-      expect(serialized).not.toContain('IMGBYTES');
+      expect(sentReq.imageBase64).toBeUndefined();
       // Text scrub IS active for text-only providers — that's where
       // it's the only privacy lever the user has.
-      expect(serialized).toContain('[REDACTED-EMAIL]');
-      expect(serialized).toContain('[REDACTED-NUMBER]');
-      expect(serialized).not.toContain('jay@example.com');
-      expect(serialized).not.toContain('9998887777');
+      expect(sentReq.userText).toContain('[REDACTED-EMAIL]');
+      expect(sentReq.userText).toContain('[REDACTED-NUMBER]');
+      expect(sentReq.userText).not.toContain('jay@example.com');
+      expect(sentReq.userText).not.toContain('9998887777');
     } finally {
-      globalThis.fetch = originalFetch;
+      sendSpy.mockRestore();
       resetContext();
     }
   });
