@@ -406,8 +406,14 @@ describe('ChatView — per-bubble copy', () => {
       await flushFakeProvider();
       const pressable = findCopyButton(tree);
       expect(pressable).toBeDefined();
-      act(() => {
+      // Async-act + drain so setCopyFeedback (fired from the
+      // copyToClipboard .then chain) lands inside this act window.
+      // The .catch link added one extra microtask hop, which pushed
+      // the state update past a synchronous act() boundary.
+      await act(async () => {
         (pressable!.props as {onPress: () => void}).onPress();
+        await Promise.resolve();
+        await Promise.resolve();
       });
       expect(copySpy).toHaveBeenCalledWith(
         expect.stringContaining('Notes are too long to skim'),
@@ -437,8 +443,10 @@ describe('ChatView — per-bubble copy', () => {
       });
       await flushFakeProvider();
       const pressable = findCopyButton(tree)!;
-      act(() => {
+      await act(async () => {
         (pressable.props as {onPress: () => void}).onPress();
+        await Promise.resolve();
+        await Promise.resolve();
       });
       const [clipboardText] = copySpy.mock.calls[0] as [string, string];
       // Heading hashes gone; bullets converted to •; bold/italic stripped.
