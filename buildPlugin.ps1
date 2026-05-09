@@ -180,6 +180,64 @@ function Get-PackageInfo {
     }
 }
 
+<#
+Function: ConvertTo-VersionCode
+Purpose: Map a semver MAJOR.MINOR.PATCH string to a monotonically
+         increasing integer matching buildPlugin.sh's derive_version_code
+         scheme: MAJOR*10000 + MINOR*100 + PATCH
+           1.0.2  -> 10002
+           1.2.10 -> 10210
+           2.0.0  -> 20000
+Input: Version - semver string (e.g. '1.0.2')
+Output: [int] derived versionCode
+#>
+function ConvertTo-VersionCode {
+    param([string]$Version)
+
+    $parts = $Version.Split('.')
+    if ($parts.Count -lt 3) {
+        Write-ColorOutput "Unrecognised version '$Version'; defaulting versionCode to 1" 'Yellow'
+        return 1
+    }
+    $major = [int]$parts[0]
+    $minor = [int]$parts[1]
+    $patch = [int]$parts[2]
+    return ($major * 10000) + ($minor * 100) + $patch
+}
+
+<#
+Function: Sync-PluginConfigVersion
+Purpose: Keep PluginConfig.json's versionName/versionCode in lockstep
+         with package.json. The Supernote firmware reads PluginConfig
+         .json (not package.json) for the on-device plugin card and the
+         installer's "update available?" check — without this rewrite,
+         every artifact would ship with whatever was checked in.
+Input: ProjectRoot - project root path; PackageInfo - hashtable with Version
+Output: rewrites PluginConfig.json in place when it exists; otherwise no-op
+#>
+function Sync-PluginConfigVersion {
+    param([string]$ProjectRoot, [hashtable]$PackageInfo)
+
+    $configFile = Join-Path $ProjectRoot 'PluginConfig.json'
+    if (-not (Test-Path $configFile)) { return }
+
+    $versionCode = ConvertTo-VersionCode -Version $PackageInfo.Version
+
+    try {
+        $config = Get-Content $configFile -Raw | ConvertFrom-Json
+        $configHash = @{}
+        $config.PSObject.Properties | ForEach-Object { $configHash[$_.Name] = $_.Value }
+        $configHash.versionName = $PackageInfo.Version
+        $configHash.versionCode = "$versionCode"
+        $configHash | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
+        Write-ColorOutput "Synced PluginConfig.json: versionName=$($PackageInfo.Version), versionCode=$versionCode" 'Green'
+    }
+    catch {
+        Write-ColorOutput "Failed to sync PluginConfig.json version fields: $_" 'Red'
+        exit 1
+    }
+}
+
 # Create PluginConfig.json file
 function New-PluginConfig {
     param(
@@ -187,22 +245,23 @@ function New-PluginConfig {
         [hashtable]$PackageInfo,
         [string]$ProjectRoot
     )
-    
+
     $configFile = Join-Path $ProjectRoot 'PluginConfig.json'
-    
+    $versionCode = ConvertTo-VersionCode -Version $PackageInfo.Version
+
     Write-ColorOutput 'Creating PluginConfig.json file...' 'Blue'
-    
+
     $config = @{
         name = $PackageInfo.Name
         desc = $PackageInfo.Description
         iconPath = ''
         versionName = $PackageInfo.Version
-        versionCode = '1'
+        versionCode = "$versionCode"
         pluginID = $PluginId
         pluginKey = $PackageInfo.Name
         jsMainPath = 'index'
     }
-    
+
     try {
         $config | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
         Write-ColorOutput "PluginConfig.json file created: $configFile" 'Green'
@@ -1150,6 +1209,14 @@ function Main {
     Write-ColorOutput '=== Step 1: Check build/generated directory ===' 'Blue'
     $packageInfo = Get-PackageInfo -ProjectRoot $projectRoot
     $projectName = $packageInfo.name
+
+    # Pull PluginConfig.json's versionName/versionCode forward from
+    # package.json before anything downstream reads it. Without this
+    # the on-device plugin card stays pinned to whatever the scaffold
+    # seeded (often 0.1.0 / 1) regardless of how often package.json
+    # bumps. Mirrors sync_plugin_config_version in buildPlugin.sh.
+    Sync-PluginConfigVersion -ProjectRoot $projectRoot -PackageInfo $packageInfo
+
     $buildGeneratedDir = Join-Path $projectRoot 'build\generated'
     
     if (Test-Path $buildGeneratedDir) {
