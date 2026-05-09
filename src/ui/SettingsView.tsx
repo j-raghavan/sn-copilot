@@ -14,11 +14,8 @@ import {discoverKeyFiles, type FileUtilsLike} from '../storage/keyFiles';
 import {resolveActiveProvider} from '../storage/activeProvider';
 import {createProviderClient} from '../providers';
 import type {KeyFile, ProviderId, ProviderResolution} from '../types';
-import Toggle from './Toggle';
 
 export type SettingsViewProps = {
-  initialPiiRedaction?: boolean;
-  initialVision?: boolean;
   onClose: () => void;
 };
 
@@ -51,12 +48,10 @@ const consoleLogger = {
 export default function SettingsView(
   props: SettingsViewProps,
 ): React.JSX.Element {
-  const {initialPiiRedaction = true, initialVision = false, onClose} = props;
+  const {onClose} = props;
 
   const [resolution, setResolution] = useState<ProviderResolution | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
-  const [piiRedaction, setPiiRedaction] = useState<boolean>(initialPiiRedaction);
-  const [vision, setVision] = useState<boolean>(initialVision);
   const [testStatus, setTestStatus] = useState<TestStatus>({kind: 'idle'});
 
   // mountedRef guards every setState that follows an await — without
@@ -241,24 +236,11 @@ export default function SettingsView(
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Privacy</Text>
-        <View style={styles.toggleRow}>
-          <Text style={styles.toggleLabel}>PII redaction (default on)</Text>
-          <Toggle
-            testID="settings-pii-toggle"
-            accessibilityLabel="Toggle PII redaction"
-            value={piiRedaction}
-            onValueChange={setPiiRedaction}
-          />
-        </View>
-        <View style={styles.toggleRow}>
-          <Text style={styles.toggleLabel}>Send page image (vision; off)</Text>
-          <Toggle
-            testID="settings-vision-toggle"
-            accessibilityLabel="Toggle vision mode"
-            value={vision}
-            onValueChange={setVision}
-          />
-        </View>
+        <Text testID="settings-privacy-note" style={styles.privacyNote}>
+          The page screenshot and any transcribed text on it are sent
+          to the configured LLM provider. Avoid opening sensitive
+          pages while Copilot is active.
+        </Text>
       </View>
     </ScrollView>
   );
@@ -327,14 +309,6 @@ function ActiveProviderBlock({active}: {active: KeyFile}): React.JSX.Element {
           testID="settings-active-key"
           style={[styles.fieldValue, styles.mono]}>
           {maskKey(active.key)}
-        </Text>
-      </View>
-      <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>Mode</Text>
-        <Text
-          testID="settings-active-mode"
-          style={[styles.fieldValue, styles.mono]}>
-          {active.mode}
         </Text>
       </View>
       <View style={styles.fieldRow}>
@@ -509,16 +483,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#000000',
   },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-  },
-  toggleLabel: {
-    fontSize: 14,
+  privacyNote: {
+    fontSize: 13,
     color: '#000000',
-    flex: 1,
-    marginRight: 16,
+    fontStyle: 'italic',
+    paddingVertical: 4,
   },
 });

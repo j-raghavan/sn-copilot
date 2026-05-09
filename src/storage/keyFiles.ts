@@ -10,7 +10,7 @@
 // editor quirks (trailing whitespace, tabs, CRLF, blank lines,
 // comments).
 
-import {PROVIDER_IDS, type KeyFile, type Mode, type ProviderId} from '../types';
+import {PROVIDER_IDS, type KeyFile, type ProviderId} from '../types';
 import {decodeUtf8} from '../sdk/utf8';
 import type {Logger} from '../sdk/types';
 
@@ -161,21 +161,15 @@ export const parseKeyFile = (
     return {kind: 'parse-error', path, reason: 'missing required field: model'};
   }
 
-  // Default mode follows the provider's vision capability:
-  // anthropic / openai / gemini are image-capable, so handwritten
-  // Notes (which carry their content in the page image, not a text
-  // layer) work out of the box. DeepSeek is text-only — its default
-  // stays 'text'. Explicit mode= in the key file always wins.
-  const defaultMode: Mode = provider === 'deepseek' ? 'text' : 'image';
-  let mode: Mode = defaultMode;
+  // mode= is no longer honoured. Vision capability is derived from
+  // the provider id (see isImageCapableProvider in src/types.ts) so
+  // the user can't accidentally suppress the page image on a vision
+  // provider. Old templates that still ship a `mode=` line get a
+  // single warning so the field's removal isn't silent.
   if (fields.mode !== undefined) {
-    if (fields.mode === 'text' || fields.mode === 'image') {
-      mode = fields.mode;
-    } else {
-      logger.warn(
-        `${TAG} ${fileName}: invalid mode="${fields.mode}" — defaulting to ${defaultMode}`,
-      );
-    }
+    logger.warn(
+      `${TAG} ${fileName}: 'mode' is ignored — vision capability is derived from provider id. Remove the line to silence this warning.`,
+    );
   }
 
   let defaultProvider: ProviderId | undefined;
@@ -224,7 +218,6 @@ export const parseKeyFile = (
       provider: expectedProvider,
       model: fields.model,
       key: fields.key,
-      mode,
       defaultProvider,
       clarifyRedact,
       sourcePath: path,

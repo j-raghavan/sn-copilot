@@ -16,7 +16,6 @@ const makeFile = (overrides: Partial<KeyFile> = {}): KeyFile => ({
   provider: 'anthropic',
   model: 'claude-haiku-4-5',
   key: 'sk-ant-test',
-  mode: 'text',
   sourcePath: '/storage/emulated/0/MyStyle/SnCopilot/copilot-key-anthropic.txt',
   ...overrides,
 });

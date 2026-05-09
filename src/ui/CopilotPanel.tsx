@@ -29,11 +29,9 @@ export type CopilotPanelProps = {
   // Initial scope label shown in the chat header. Currently fixed to
   // "Current Page"; placeholder for richer scope resolution.
   initialScopeLabel?: string;
-  initialPiiRedaction?: boolean;
 };
 
 const DEFAULT_SCOPE_LABEL = 'Current Page';
-const DEFAULT_PII_REDACTION = true;
 
 const PROVIDER_LABEL_FALLBACK = 'Demo (no key)';
 
@@ -55,10 +53,7 @@ const consoleLogger = {
 export default function CopilotPanel(
   props: CopilotPanelProps,
 ): React.JSX.Element {
-  const {
-    initialScopeLabel = DEFAULT_SCOPE_LABEL,
-    initialPiiRedaction = DEFAULT_PII_REDACTION,
-  } = props;
+  const {initialScopeLabel = DEFAULT_SCOPE_LABEL} = props;
 
   const [view, setView] = useState<View>('chat');
   const [activeKeyFile, setActiveKeyFile] = useState<KeyFile | undefined>(
@@ -127,7 +122,6 @@ export default function CopilotPanel(
     <ChatView
       scopeLabel={initialScopeLabel}
       provider={providerLabel}
-      initialPiiRedaction={initialPiiRedaction}
       keyFile={activeKeyFile}
       onSettingsTap={() => setView('settings')}
       onClose={closeOverlay}

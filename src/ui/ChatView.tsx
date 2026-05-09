@@ -37,13 +37,12 @@ import {debugLog, infoLog} from '../diagnostics/log';
 import {redactPii} from '../privacy/redact';
 import {tryAcquire, release} from '../reentrancy/inFlightGuard';
 import {getPageContext} from '../scope/pageContext';
-import type {KeyFile} from '../types';
+import {isImageCapableProvider, type KeyFile} from '../types';
 import {composeUserText} from './composePrompt';
 import {buildMarkdownStyles} from './markdownStyles';
 import {markdownToPlainText} from './markdownToPlain';
 import {sanitizeProviderError} from './sanitizeProviderError';
 import {SYSTEM_PROMPT} from './systemPrompt';
-import Toggle from './Toggle';
 import {useProviderClient} from './useProviderClient';
 
 // Hard ceiling on a single send. Real providers usually answer in
@@ -67,7 +66,6 @@ export type QuickActionId = 'summarize' | 'explain' | 'clarify' | 'snapshot';
 export type ChatViewProps = {
   scopeLabel: string;
   provider: string;
-  initialPiiRedaction: boolean;
   // When a key file is configured (read at startup), keyFile is the
   // active KeyFile from MyStyle/SnCopilot/. ChatView then uses the
   // real provider client + the user's key. When undefined (no key
@@ -110,7 +108,6 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   const {
     scopeLabel,
     provider,
-    initialPiiRedaction,
     keyFile,
     onSettingsTap,
     onClose,
@@ -120,7 +117,6 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState<string>('');
-  const [piiOn, setPiiOn] = useState<boolean>(initialPiiRedaction);
   const [busy, setBusy] = useState<boolean>(false);
   const [fontSize, setFontSize] = useState<FontSize>('S');
   // Transient per-bubble copy feedback. Only the most recently
@@ -167,22 +163,21 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       // Awaiting here absorbs any residual capture latency under the
       // existing "thinking" placeholder.
       const ctx = await getPageContext();
-      // PII toggle redacts TEXT only — emails and long digit runs in
-      // the composed prompt are scrubbed before the request goes
-      // out. The page image is intentionally NOT gated by piiOn:
-      // most Supernote pages are handwriting, and dropping the image
-      // would leave the model with no content to work from. Image
-      // attachment is governed by KeyFile.mode instead — text-only
-      // keys never receive the image regardless of toggle state.
+      // Vision capability is purely a property of the provider —
+      // anthropic / openai / gemini get the page image, deepseek
+      // doesn't. For text-only providers we silently scrub emails
+      // and long digit runs (the only place redaction can actually
+      // help, since there's no image channel). For image-capable
+      // providers we send the composed text verbatim — redacting
+      // text while shipping the full screenshot would be theatre.
       const composed = composeUserText(trimmed, ctx);
-      const userText = piiOn ? redactPii(composed) : composed;
-      const allowImage = keyFile === undefined || keyFile.mode === 'image';
+      const allowImage =
+        keyFile === undefined || isImageCapableProvider(keyFile.provider);
+      const userText = allowImage ? composed : redactPii(composed);
       const imageBase64 = allowImage ? ctx?.screenshotBase64 : undefined;
-      // Survives prod bundles. Tells us at a glance whether the
-      // payload had the bits the model needs to answer.
       infoLog(
-        `[COPILOT_CHAT] send piiOn=${piiOn} ` +
-          `keyFileMode=${keyFile?.mode ?? 'fake'} ` +
+        '[COPILOT_CHAT] send ' +
+          `provider=${keyFile?.provider ?? 'fake'} ` +
           `allowImage=${allowImage} ` +
           `imageAttached=${imageBase64 !== undefined} ` +
           `userText.length=${userText.length} ` +
@@ -237,7 +232,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       release();
       setBusy(false);
     }
-  }, [apiKey, client, keyFile, model, piiOn]);
+  }, [apiKey, client, keyFile, model]);
 
   const onQuickActionTap = useCallback(
     (action: QuickActionId) => {
@@ -405,16 +400,14 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         ))}
       </View>
 
-      {/* PII redaction line */}
-      <View testID="chat-pii-row" style={styles.piiRow}>
-        <Text style={styles.piiText}>{'🛡️'} PII redaction</Text>
-        <Toggle
-          testID="chat-pii-toggle"
-          accessibilityLabel="Toggle PII redaction"
-          value={piiOn}
-          onValueChange={setPiiOn}
-        />
-      </View>
+      {/* Privacy caution. The page screenshot + transcribed text
+          go to the configured LLM provider verbatim — there's no
+          on-device redaction. Be deliberate about what's on the
+          page before tapping a quick action. */}
+      <Text testID="chat-privacy-note" style={styles.privacyNote}>
+        {'🛡️'} Avoid sharing sensitive info; the visible page is
+        sent to the LLM.
+      </Text>
 
       <View style={styles.divider} />
 
@@ -662,27 +655,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#000000',
   },
-  piiRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  privacyNote: {
+    fontSize: 13,
+    color: '#000000',
+    fontStyle: 'italic',
     paddingVertical: 6,
     marginBottom: 4,
-  },
-  piiText: {
-    fontSize: 16,
-    color: '#000000',
-  },
-  piiToggleBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 4,
-  },
-  piiToggleText: {
-    fontSize: 12,
-    color: '#000000',
   },
   divider: {
     height: 1,

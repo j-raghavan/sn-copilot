@@ -78,7 +78,7 @@ describe('matchKeyFilename — tolerance map', () => {
 });
 
 describe('parseKeyFile — required fields', () => {
-  it('parses a minimal valid file (image-capable provider defaults to mode=image)', () => {
+  it('parses a minimal valid file', () => {
     const text = 'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-x\n';
     const r = parseKeyFile(
       text,
@@ -90,34 +90,19 @@ describe('parseKeyFile — required fields', () => {
       expect(r.file.provider).toBe('anthropic');
       expect(r.file.model).toBe('claude-haiku-4-5');
       expect(r.file.key).toBe('sk-ant-x');
-      // Default for vision-capable providers is image so handwritten
-      // Notes work without manual config.
-      expect(r.file.mode).toBe('image');
     }
   });
 
-  it('deepseek defaults to mode=text since it has no vision endpoint', () => {
-    const r = parseKeyFile(
-      'provider=deepseek\nmodel=deepseek-chat\nkey=sk-deep\n',
-      '/tmp/copilot-key-deepseek.txt',
-      silentLogger,
-    );
-    expect(r.kind).toBe('ok');
-    if (r.kind === 'ok') {
-      expect(r.file.mode).toBe('text');
-    }
-  });
-
-  it('explicit mode=text on an image-capable provider still wins', () => {
+  it('explicit mode= is ignored with a warning (vision derived from provider)', () => {
     const r = parseKeyFile(
       'provider=openai\nmodel=gpt-4o-mini\nkey=sk-x\nmode=text\n',
       '/tmp/copilot-key-openai.txt',
       silentLogger,
     );
     expect(r.kind).toBe('ok');
-    if (r.kind === 'ok') {
-      expect(r.file.mode).toBe('text');
-    }
+    expect(silentLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("'mode' is ignored"),
+    );
   });
 
   it('rejects unrecognised filename', () => {
@@ -329,32 +314,19 @@ describe('parseKeyFile — forgiving parser quirks', () => {
 describe('parseKeyFile — optional fields', () => {
   const path = '/tmp/copilot-key-anthropic.txt';
 
-  it('mode=image is honoured', () => {
-    const r = parseKeyFile(
-      'provider=anthropic\nmodel=x\nkey=y\nmode=image\n',
-      path,
-      silentLogger,
-    );
-    expect(r.kind).toBe('ok');
-    if (r.kind === 'ok') {
-      expect(r.file.mode).toBe('image');
+  it('mode= line is ignored regardless of value (text/image/bogus)', () => {
+    for (const value of ['text', 'image', 'bogus']) {
+      silentLogger.warn.mockClear();
+      const r = parseKeyFile(
+        `provider=anthropic\nmodel=x\nkey=y\nmode=${value}\n`,
+        path,
+        silentLogger,
+      );
+      expect(r.kind).toBe('ok');
+      expect(silentLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("'mode' is ignored"),
+      );
     }
-  });
-
-  it('invalid mode is logged and falls back to the provider default', () => {
-    // anthropic is image-capable, so the provider default is 'image'.
-    const r = parseKeyFile(
-      'provider=anthropic\nmodel=x\nkey=y\nmode=bogus\n',
-      path,
-      silentLogger,
-    );
-    expect(r.kind).toBe('ok');
-    if (r.kind === 'ok') {
-      expect(r.file.mode).toBe('image');
-    }
-    expect(silentLogger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('invalid mode'),
-    );
   });
 
   it('default_provider is parsed', () => {

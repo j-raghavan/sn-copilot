@@ -40,7 +40,6 @@ describe('useProviderClient', () => {
       provider: 'openai',
       key: 'sk-real',
       model: 'gpt-4o-mini',
-      mode: 'text',
       sourcePath: '/sd/key.txt',
     };
     const {readout} = render(keyFile);
@@ -54,7 +53,6 @@ describe('useProviderClient', () => {
         provider,
         key: 'k',
         model: 'm',
-        mode: 'text',
         sourcePath: '/sd/x.txt',
       };
       const {readout} = render(keyFile);

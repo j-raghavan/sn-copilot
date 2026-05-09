@@ -27,7 +27,6 @@ import {
   findAllText,
   findByTestID,
   maybeFindByTestID,
-  pressByTestID,
   textOf,
 } from './helpers/textTraversal';
 
@@ -44,7 +43,6 @@ function render(overrides: Partial<React.ComponentProps<typeof ChatView>> = {}) 
       <ChatView
         scopeLabel="Current Page"
         provider="Claude"
-        initialPiiRedaction={true}
         onSettingsTap={onSettingsTap}
         onClose={onClose}
         {...overrides}
@@ -87,8 +85,10 @@ describe('ChatView — initial render', () => {
     expect(findByTestID(tree, 'chat-action-clarify')).toBeDefined();
     expect(findByTestID(tree, 'chat-action-snapshot')).toBeDefined();
 
-    expect(findByTestID(tree, 'chat-pii-row')).toBeDefined();
-    expect(findByTestID(tree, 'chat-pii-toggle')).toBeDefined();
+    expect(findByTestID(tree, 'chat-privacy-note')).toBeDefined();
+    expect(textOf(tree, 'chat-privacy-note')).toContain(
+      'Avoid sharing sensitive info',
+    );
 
     expect(findByTestID(tree, 'chat-empty')).toBeDefined();
 
@@ -112,16 +112,6 @@ describe('ChatView — initial render', () => {
   it('renders the Copilot brand icon to the left of the title', () => {
     const {tree} = render();
     expect(findByTestID(tree, 'chat-title-icon')).toBeDefined();
-  });
-
-  it('PII redaction toggle reflects ON/OFF state', () => {
-    const {tree} = render({initialPiiRedaction: true});
-    // Toggle renders its current state as visible text ("ON"/"OFF").
-    expect(textOf(tree, 'chat-pii-toggle')).toBe('ON');
-    act(() => {
-      pressByTestID(tree, 'chat-pii-toggle');
-    });
-    expect(textOf(tree, 'chat-pii-toggle')).toBe('OFF');
   });
 
   it('shows the provider in the footer; settings cog is on the context row', () => {
@@ -740,24 +730,24 @@ describe('ChatView — hung send timeout', () => {
   });
 });
 
-describe('ChatView — KeyFile.mode gate on image attachment', () => {
-  const seedContextWithImage = (): void => {
+describe('ChatView — provider-driven image gate', () => {
+  const seedContext = (): void => {
     const {setPageContext} = require('../src/scope/pageContext');
     setPageContext({
       notePath: '/sd/x.note',
       page: 1,
       screenshotPath: '/sd/png',
       screenshotBase64: 'IMGBYTES',
-      pageText: 'page body',
+      pageText: 'Reach me at jay@example.com or 5551234567.',
     });
   };
-  const resetCtx = (): void => {
+  const resetContext = (): void => {
     const {__testing__} = require('../src/scope/pageContext');
     __testing__.reset();
   };
 
-  it('suppresses imageBase64 when keyFile.mode is "text" even with piiOn off', async () => {
-    seedContextWithImage();
+  it('text-only provider (deepseek) sends redacted text and no image', async () => {
+    seedContext();
     const fetchSpy = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -771,83 +761,13 @@ describe('ChatView — KeyFile.mode gate on image attachment', () => {
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
     try {
       const {tree} = render({
-        initialPiiRedaction: false,
         keyFile: {
           provider: 'deepseek',
           key: 'sk-deep',
           model: 'deepseek-chat',
-          mode: 'text',
           sourcePath: '/sd/copilot-key-deepseek.txt',
         },
       });
-      act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
-      });
-      await flushFakeProvider();
-      expect(fetchSpy).toHaveBeenCalled();
-      const [, init] = fetchSpy.mock.calls[0];
-      const body = JSON.parse(init.body as string);
-      const serialized = JSON.stringify(body);
-      expect(serialized).not.toContain('IMGBYTES');
-    } finally {
-      globalThis.fetch = originalFetch;
-      resetCtx();
-    }
-  });
-
-  it('forwards imageBase64 when keyFile.mode is "image" and piiOn off', async () => {
-    seedContextWithImage();
-    const fp = require('../src/providers/fakeProvider').default;
-    const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
-      text: 'ok',
-      usage: {inputTokens: 1, outputTokens: 1},
-      latencyMs: 1,
-      modelId: 'fake-model-1',
-    });
-    try {
-      // No keyFile → behaves as image-allowed (matches fake fallback).
-      const {tree} = render({initialPiiRedaction: false});
-      act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
-      });
-      await flushFakeProvider();
-      const sentReq = sendSpy.mock.calls[0][0] as {imageBase64?: string};
-      expect(sentReq.imageBase64).toBe('IMGBYTES');
-    } finally {
-      sendSpy.mockRestore();
-      resetCtx();
-    }
-  });
-});
-
-describe('ChatView — PII redaction enforcement', () => {
-  const seedContext = (): void => {
-    const {setPageContext} = require('../src/scope/pageContext');
-    setPageContext({
-      notePath: '/sd/x.note',
-      page: 1,
-      screenshotPath: '/sd/png',
-      screenshotBase64: 'IMGBYTES',
-      pageText: 'Reach me at jay@example.com or 5551234567.',
-    });
-  };
-
-  const resetContext = (): void => {
-    const {__testing__} = require('../src/scope/pageContext');
-    __testing__.reset();
-  };
-
-  it('redacts email + long digits in text but still attaches image when piiOn is true', async () => {
-    seedContext();
-    const fp = require('../src/providers/fakeProvider').default;
-    const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
-      text: 'ok',
-      usage: {inputTokens: 1, outputTokens: 1},
-      latencyMs: 1,
-      modelId: 'fake-model-1',
-    });
-    try {
-      const {tree} = render({initialPiiRedaction: true});
       act(() => {
         findByTestID(tree, 'chat-input').props.onChangeText(
           'Forward to me@b.co at 9998887777',
@@ -857,25 +777,25 @@ describe('ChatView — PII redaction enforcement', () => {
         findByTestID(tree, 'chat-send').props.onPress();
       });
       await flushFakeProvider();
-      const sentReq = sendSpy.mock.calls[0][0] as {
-        userText: string;
-        imageBase64?: string;
-      };
-      expect(sentReq.userText).toContain('[REDACTED-EMAIL]');
-      expect(sentReq.userText).toContain('[REDACTED-NUMBER]');
-      expect(sentReq.userText).not.toContain('jay@example.com');
-      expect(sentReq.userText).not.toContain('5551234567');
-      // Handwritten Notes carry their content in the image, so the
-      // PII toggle MUST NOT drop it — image attachment is governed
-      // by KeyFile.mode instead.
-      expect(sentReq.imageBase64).toBe('IMGBYTES');
+      expect(fetchSpy).toHaveBeenCalled();
+      const [, init] = fetchSpy.mock.calls[0];
+      const body = JSON.parse(init.body as string);
+      const serialized = JSON.stringify(body);
+      // No image bytes leak through on a text-only provider.
+      expect(serialized).not.toContain('IMGBYTES');
+      // Text scrub IS active for text-only providers — that's where
+      // it's the only privacy lever the user has.
+      expect(serialized).toContain('[REDACTED-EMAIL]');
+      expect(serialized).toContain('[REDACTED-NUMBER]');
+      expect(serialized).not.toContain('jay@example.com');
+      expect(serialized).not.toContain('9998887777');
     } finally {
-      sendSpy.mockRestore();
+      globalThis.fetch = originalFetch;
       resetContext();
     }
   });
 
-  it('forwards raw text + image when piiOn is false', async () => {
+  it('image-capable provider attaches the image and does NOT redact text', async () => {
     seedContext();
     const fp = require('../src/providers/fakeProvider').default;
     const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
@@ -885,7 +805,8 @@ describe('ChatView — PII redaction enforcement', () => {
       modelId: 'fake-model-1',
     });
     try {
-      const {tree} = render({initialPiiRedaction: false});
+      // No keyFile → fakeProvider, treated as image-capable.
+      const {tree} = render();
       act(() => {
         findByTestID(tree, 'chat-action-summarize').props.onPress();
       });
@@ -894,14 +815,17 @@ describe('ChatView — PII redaction enforcement', () => {
         userText: string;
         imageBase64?: string;
       };
+      expect(sentReq.imageBase64).toBe('IMGBYTES');
+      // Image carries the full content anyway, so redacting text
+      // would be theatre — verify we don't.
       expect(sentReq.userText).toContain('jay@example.com');
       expect(sentReq.userText).toContain('5551234567');
-      expect(sentReq.imageBase64).toBe('IMGBYTES');
     } finally {
       sendSpy.mockRestore();
       resetContext();
     }
   });
+
 });
 
 // Side-effect: ensure jest.requireActual references stay alive (no

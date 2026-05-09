@@ -50,7 +50,6 @@ import {
   findAllText,
   findByTestID,
   maybeFindByTestID,
-  pressByTestID,
   textOf,
 } from './helpers/textTraversal';
 
@@ -102,14 +101,14 @@ describe('SettingsView — discovery: one valid key file', () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.startsWith('file://')) {
         return fileResp(
-          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-test123\nmode=text\n',
+          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-test123\n',
         );
       }
       return {ok: false, status: 500, text: async () => 'unexpected'};
     });
   });
 
-  it('shows active provider/model/masked-key/mode/source', async () => {
+  it('shows active provider/model/masked-key/source', async () => {
     const {tree} = renderSettings();
     await act(async () => {
       await flushPromises();
@@ -120,7 +119,8 @@ describe('SettingsView — discovery: one valid key file', () => {
     expect(textOf(tree, 'settings-active-key')).not.toContain('sk-ant-test123');
     expect(textOf(tree, 'settings-active-key')).toContain('sk-ant-');
     expect(textOf(tree, 'settings-active-key')).toContain('•');
-    expect(textOf(tree, 'settings-active-mode')).toBe('text');
+    // Mode row was removed when 'mode' became a derived value.
+    expect(maybeFindByTestID(tree, 'settings-active-mode')).toBeNull();
     expect(textOf(tree, 'settings-active-source')).toContain(
       'copilot-key-anthropic.txt',
     );
@@ -221,31 +221,22 @@ describe('SettingsView — discovery: parse error', () => {
   });
 });
 
-describe('SettingsView — toggles + close', () => {
+describe('SettingsView — privacy note + close', () => {
   beforeEach(() => {
     mockListFiles.mockResolvedValueOnce(null);
   });
 
-  it('PII and vision toggles flip on tap', async () => {
-    const {tree} = renderSettings({
-      initialPiiRedaction: true,
-      initialVision: false,
-    });
+  it('shows the static privacy note (no PII/vision toggles)', async () => {
+    const {tree} = renderSettings();
     await act(async () => {
       await flushPromises();
     });
-    expect(textOf(tree, 'settings-pii-toggle')).toBe('ON');
-    expect(textOf(tree, 'settings-vision-toggle')).toBe('OFF');
-
-    act(() => {
-      pressByTestID(tree, 'settings-pii-toggle');
-    });
-    expect(textOf(tree, 'settings-pii-toggle')).toBe('OFF');
-
-    act(() => {
-      pressByTestID(tree, 'settings-vision-toggle');
-    });
-    expect(textOf(tree, 'settings-vision-toggle')).toBe('ON');
+    expect(maybeFindByTestID(tree, 'settings-pii-toggle')).toBeNull();
+    expect(maybeFindByTestID(tree, 'settings-vision-toggle')).toBeNull();
+    expect(findByTestID(tree, 'settings-privacy-note')).toBeDefined();
+    expect(textOf(tree, 'settings-privacy-note')).toContain(
+      'sent to the configured LLM provider',
+    );
   });
 
   it('fires onClose when [X] is tapped', async () => {
