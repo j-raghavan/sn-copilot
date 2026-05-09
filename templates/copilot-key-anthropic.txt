@@ -1,0 +1,14 @@
+# Copilot key file — Anthropic (Claude).
+#
+# Copy this file to /storage/emulated/0/MyStyle/SnCopilot/ on the
+# Supernote (USB or cloud sync), replace KEY with your real Anthropic
+# API key, optionally adjust MODEL, then tap the Copilot sidebar
+# button. Nothing else to do.
+#
+# - The page screenshot is sent to Claude on every chat send. Avoid
+#   opening sensitive pages while Copilot is active.
+# - Lines starting with '#' are comments. Blank lines are ignored.
+
+provider=anthropic
+model=claude-haiku-4-5
+key=sk-ant-REPLACE-ME
