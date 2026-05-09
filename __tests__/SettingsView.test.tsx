@@ -76,18 +76,33 @@ function renderSettings(
 }
 
 describe('SettingsView — discovery: no key files', () => {
-  it('shows the "no key file configured" hint when MyStyle/SnCopilot is empty', async () => {
+  it('shows a 4-step setup checklist when MyStyle/SnCopilot is empty', async () => {
     mockListFiles.mockResolvedValueOnce(null);
     const {tree} = renderSettings();
     await act(async () => {
       await flushPromises();
     });
     expect(findByTestID(tree, 'settings-resolution-none')).toBeDefined();
+    // Numbered steps 1-4 are individually findable.
+    expect(findByTestID(tree, 'settings-setup-step-1')).toBeDefined();
+    expect(findByTestID(tree, 'settings-setup-step-2')).toBeDefined();
+    expect(findByTestID(tree, 'settings-setup-step-3')).toBeDefined();
+    expect(findByTestID(tree, 'settings-setup-step-4')).toBeDefined();
+    // No 5th step.
+    expect(maybeFindByTestID(tree, 'settings-setup-step-5')).toBeNull();
+
     const text = findAllText(tree).join(' | ');
-    expect(text).toContain('copilot-key-anthropic.txt');
-    expect(text).toContain('copilot-key-openai.txt');
-    expect(text).toContain('claude');
-    expect(text).toContain('google');
+    // Step content checkpoints — each checklist item lands on screen.
+    expect(text).toContain('Pick a provider');
+    expect(text).toContain('Create the folder');
+    expect(text).toContain('/MyStyle/SnCopilot/');
+    expect(text).toContain('Add the key file');
+    expect(text).toContain('copilot-key-<provider>.txt');
+    expect(text).toContain('Tap Refresh');
+    expect(text).toContain('Refresh from disk');
+    // Filename-tolerance hint preserved.
+    expect(text).toContain('copilot-key-claude.txt');
+    expect(text).toContain('copilot-key-google.txt');
   });
 });
 
