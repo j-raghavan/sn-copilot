@@ -167,16 +167,17 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       // Awaiting here absorbs any residual capture latency under the
       // existing "thinking" placeholder.
       const ctx = await getPageContext();
-      // PII toggle is the privacy contract: when on, redact the
-      // composed text and drop the screenshot entirely (the page
-      // image can carry PII the regex doesn't see). KeyFile.mode is
-      // the second gate — text-only providers (or text-mode keys)
-      // never receive the image regardless of toggle state.
+      // PII toggle redacts TEXT only — emails and long digit runs in
+      // the composed prompt are scrubbed before the request goes
+      // out. The page image is intentionally NOT gated by piiOn:
+      // most Supernote pages are handwriting, and dropping the image
+      // would leave the model with no content to work from. Image
+      // attachment is governed by KeyFile.mode instead — text-only
+      // keys never receive the image regardless of toggle state.
       const composed = composeUserText(trimmed, ctx);
       const userText = piiOn ? redactPii(composed) : composed;
       const allowImage = keyFile === undefined || keyFile.mode === 'image';
-      const imageBase64 =
-        piiOn || !allowImage ? undefined : ctx?.screenshotBase64;
+      const imageBase64 = allowImage ? ctx?.screenshotBase64 : undefined;
       const r = await client.send(
         {
           systemPrompt: SYSTEM_PROMPT,

@@ -837,7 +837,7 @@ describe('ChatView — PII redaction enforcement', () => {
     __testing__.reset();
   };
 
-  it('redacts email + long digits and drops image when piiOn is true', async () => {
+  it('redacts email + long digits in text but still attaches image when piiOn is true', async () => {
     seedContext();
     const fp = require('../src/providers/fakeProvider').default;
     const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
@@ -865,7 +865,10 @@ describe('ChatView — PII redaction enforcement', () => {
       expect(sentReq.userText).toContain('[REDACTED-NUMBER]');
       expect(sentReq.userText).not.toContain('jay@example.com');
       expect(sentReq.userText).not.toContain('5551234567');
-      expect(sentReq.imageBase64).toBeUndefined();
+      // Handwritten Notes carry their content in the image, so the
+      // PII toggle MUST NOT drop it — image attachment is governed
+      // by KeyFile.mode instead.
+      expect(sentReq.imageBase64).toBe('IMGBYTES');
     } finally {
       sendSpy.mockRestore();
       resetContext();
