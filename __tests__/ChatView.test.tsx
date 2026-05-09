@@ -476,6 +476,34 @@ describe('ChatView — per-bubble copy', () => {
     }
   });
 
+  it('flips to "✕ Failed" and logs when the native module rejects', async () => {
+    const overlay = require('../src/native/CopilotOverlay').default;
+    const copySpy = jest
+      .spyOn(overlay, 'copyToClipboard')
+      .mockRejectedValue(new Error('bridge gone'));
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const {tree} = render();
+      act(() => {
+        findByTestID(tree, 'chat-action-summarize').props.onPress();
+      });
+      await flushFakeProvider();
+      const copyId = findCopyTestID(tree);
+      const pressable = findCopyButton(tree)!;
+      await act(async () => {
+        (pressable.props as {onPress: () => void}).onPress();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(textOf(tree, copyId)).toBe('✕ Failed');
+      const lines = log.mock.calls.map(c => c.join(' '));
+      expect(lines.some(l => l.includes('copyToClipboard threw'))).toBe(true);
+    } finally {
+      copySpy.mockRestore();
+      log.mockRestore();
+    }
+  });
+
   it('flips to "✕ Failed" when the native module reports failure', async () => {
     const overlay = require('../src/native/CopilotOverlay').default;
     const copySpy = jest

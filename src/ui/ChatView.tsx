@@ -245,19 +245,29 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     console.log(
       `[COPILOT_CHAT] bubble copy md.length=${text.length} plain.length=${plain.length}`,
     );
-    CopilotOverlay.copyToClipboard(plain, 'Copilot reply').then(result => {
-      console.log(
-        '[COPILOT_CHAT] copyToClipboard result',
-        JSON.stringify(result),
-      );
-      const state: 'copied' | 'failed' = result.success ? 'copied' : 'failed';
+    const showFeedback = (state: 'copied' | 'failed'): void => {
       setCopyFeedback({msgId, state});
       setTimeout(() => {
         setCopyFeedback(curr =>
           curr !== null && curr.msgId === msgId ? null : curr,
         );
       }, 1500);
-    });
+    };
+    CopilotOverlay.copyToClipboard(plain, 'Copilot reply')
+      .then(result => {
+        console.log(
+          '[COPILOT_CHAT] copyToClipboard result',
+          JSON.stringify(result),
+        );
+        showFeedback(result.success ? 'copied' : 'failed');
+      })
+      // Native module wrappers are designed to resolve, not reject —
+      // but a stray throw in the bridge would otherwise become an
+      // unhandled rejection. Treat it as a failed copy.
+      .catch(err => {
+        console.log('[COPILOT_CHAT] copyToClipboard threw', String(err));
+        showFeedback('failed');
+      });
   }, []);
 
   const handleSmaller = useCallback(
