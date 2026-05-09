@@ -85,8 +85,9 @@ describe('captureCurrentPage — happy path', () => {
     expect(ctx).not.toBeNull();
     expect(ctx?.notePath).toBe('/sd/notes/x.note');
     expect(ctx?.page).toBe(5);
-    expect(ctx?.screenshotPath).toBe(
-      '/data/user/0/com.sncopilot/files/copilot-page.png',
+    // Path is now dir + unique scratch filename (copilot-page-<ts>-<n>.png)
+    expect(ctx?.screenshotPath).toMatch(
+      /^\/data\/user\/0\/com\.sncopilot\/files\/copilot-page-\d+-\d+\.png$/,
     );
     expect(ctx?.screenshotBase64.length).toBeGreaterThan(0);
     // pageText: typed text first, then handwriting recognition
@@ -98,7 +99,7 @@ describe('captureCurrentPage — happy path', () => {
       notePath: '/sd/notes/x.note',
       page: 5,
       times: 1,
-      pngPath: '/data/user/0/com.sncopilot/files/copilot-page.png',
+      pngPath: ctx?.screenshotPath,
       type: 1,
     });
     // recognizeElements was called with the page size
@@ -301,8 +302,8 @@ describe('captureCurrentPage — happy path', () => {
       fetchFn: okFetch,
       logger: silentLogger,
     });
-    expect(ctx?.screenshotPath).toBe(
-      '/sdcard/Android/data/copilot-page.png',
+    expect(ctx?.screenshotPath).toMatch(
+      /^\/sdcard\/Android\/data\/copilot-page-\d+-\d+\.png$/,
     );
   });
 
@@ -315,9 +316,29 @@ describe('captureCurrentPage — happy path', () => {
       fetchFn: okFetch,
       logger: silentLogger,
     });
-    expect(ctx?.screenshotPath).toBe(
-      '/sdcard/Android/data/copilot-page.png',
+    expect(ctx?.screenshotPath).toMatch(
+      /^\/sdcard\/Android\/data\/copilot-page-\d+-\d+\.png$/,
     );
+  });
+
+  it('two captures get distinct scratch paths', async () => {
+    const a = await captureCurrentPage({
+      comm: okComm,
+      file: okFile,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+    });
+    const b = await captureCurrentPage({
+      comm: okComm,
+      file: okFile,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+    });
+    expect(a?.screenshotPath).toBeDefined();
+    expect(b?.screenshotPath).toBeDefined();
+    expect(a?.screenshotPath).not.toBe(b?.screenshotPath);
   });
 
   it('uses default logger and globalThis.fetch when omitted', async () => {

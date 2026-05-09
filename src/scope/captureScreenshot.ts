@@ -54,7 +54,14 @@ export type CaptureDeps = {
   logger?: Logger;
 };
 
-const SCRATCH_FILENAME = 'copilot-page.png';
+// Each capture writes to a unique scratch path so two captures kicked
+// off in quick succession (rapid sidebar reopens) cannot read each
+// other's bytes mid-render. The counter disambiguates within a
+// single millisecond; Date.now() keeps filenames human-skimmable.
+const SCRATCH_PREFIX = 'copilot-page';
+let scratchCounter = 0;
+const nextScratchFilename = (): string =>
+  `${SCRATCH_PREFIX}-${Date.now()}-${scratchCounter++}.png`;
 
 // Both APIs return the SDK's APIResponse envelope: {success, result, error}.
 // Unwrap defensively — the field names and shapes are runtime-loose.
@@ -225,7 +232,7 @@ export const captureCurrentPage = async (
   // before any plugin file has been written — fall back to a known-
   // writable Android-data path the SDK uses internally.
   const dir = pluginDir && pluginDir.length > 0 ? pluginDir : '/sdcard/Android/data';
-  const pngPath = `${dir}/${SCRATCH_FILENAME}`;
+  const pngPath = `${dir}/${nextScratchFilename()}`;
 
   let renderResp: unknown;
   try {
