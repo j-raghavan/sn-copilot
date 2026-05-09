@@ -66,7 +66,7 @@ jobs:
         run: npm ci
 
       - name: Lint
-        run: npx eslint src/ App.tsx index.js __tests__/
+        run: npm run lint
 
       - name: Test
         run: npx jest --coverage
