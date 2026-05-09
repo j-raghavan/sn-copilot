@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [master, feat/*]
+  pull_request:
+    branches: [master]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx eslint src/ App.tsx index.js __tests__/
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx jest --coverage
+
+  # Two parallel build jobs (Linux + Windows) keep buildPlugin.sh and
+  # buildPlugin.ps1 in lockstep — a regression in either entry point
+  # would otherwise land silently. Unlike sn-dictionary, sn-copilot
+  # does not fetch external assets at build time (no dictionary
+  # download), so the build is fully self-contained.
+  build-linux:
+    name: Build (ubuntu-latest)
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build plugin
+        shell: bash
+        run: chmod +x buildPlugin.sh && ./buildPlugin.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-linux-${{ github.sha }}
+          path: build/outputs/SnCopilot.snplg
+          retention-days: 30
+
+  build-windows:
+    name: Build (windows-latest)
+    needs: [lint, test]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build plugin
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .\buildPlugin.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-windows-${{ github.sha }}
+          path: build/outputs/SnCopilot.snplg
+          retention-days: 30
