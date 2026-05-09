@@ -32,6 +32,7 @@ import {
 } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import CopilotOverlay from '../native/CopilotOverlay';
+import {debugLog} from '../diagnostics/log';
 import {redactPii} from '../privacy/redact';
 import {tryAcquire, release} from '../reentrancy/inFlightGuard';
 import {getPageContext} from '../scope/pageContext';
@@ -155,7 +156,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     setMessages(curr => [...curr, userMsg, thinkingMsg]);
     setBusy(true);
     setInput('');
-    console.log(`[COPILOT_CHAT] sendUserMessage text=${trimmed.slice(0, 40)}`);
+    debugLog(`[COPILOT_CHAT] sendUserMessage text=${trimmed.slice(0, 40)}`);
 
     const ctl = new AbortController();
     const timeoutId = setTimeout(() => ctl.abort(), SEND_TIMEOUT_MS);
@@ -185,7 +186,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         },
         {apiKey, model},
       );
-      console.log(
+      debugLog(
         `[COPILOT_CHAT] response received latencyMs=${r.latencyMs} ` +
           `text.length=${r.text.length}`,
       );
@@ -246,7 +247,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   // prose with Unicode bullets instead of raw markdown syntax.
   const onCopyBubble = useCallback((msgId: string, text: string) => {
     const plain = markdownToPlainText(text);
-    console.log(
+    debugLog(
       `[COPILOT_CHAT] bubble copy md.length=${text.length} plain.length=${plain.length}`,
     );
     const showFeedback = (state: 'copied' | 'failed'): void => {
@@ -259,7 +260,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     };
     CopilotOverlay.copyToClipboard(plain, 'Copilot reply')
       .then(result => {
-        console.log(
+        debugLog(
           '[COPILOT_CHAT] copyToClipboard result',
           JSON.stringify(result),
         );

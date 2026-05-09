@@ -10,6 +10,7 @@ import {
   BUTTON_TYPE_SIDEBAR,
 } from './src/pluginRouter';
 import CopilotOverlay from './src/native/CopilotOverlay';
+import {debugLog} from './src/diagnostics/log';
 import {captureCurrentPage} from './src/scope/captureScreenshot';
 import {setPageContextPromise} from './src/scope/pageContext';
 
@@ -80,7 +81,7 @@ subscribeToButtonEvents(async event => {
   if (event.id !== BUTTON_ID_SIDEBAR) {
     return;
   }
-  console.log(
+  debugLog(
     `[COPILOT] sidebar pressed; scope=${SCOPE_LABEL_FOR_SIDEBAR}`,
   );
 
@@ -92,8 +93,11 @@ subscribeToButtonEvents(async event => {
   // placeholder absorbs any residual wait. The .catch is belt-and-
   // suspenders — captureCurrentPage already returns null on
   // internal errors.
+  // logger.log lines from captureCurrentPage carry the notePath and
+  // byte counts, so route them through debugLog (no-op in release).
+  // logger.warn stays on console.warn — those are actionable signals.
   const consoleLogger = {
-    log: msg => console.log(msg),
+    log: msg => debugLog(msg),
     warn: msg => console.warn(msg),
   };
   const capturePromise = captureCurrentPage({
@@ -132,7 +136,7 @@ subscribeToButtonEvents(async event => {
       geometry.x,
       geometry.y,
     );
-    console.log('[COPILOT] CopilotOverlay.open result', JSON.stringify(result));
+    debugLog('[COPILOT] CopilotOverlay.open result', JSON.stringify(result));
   } catch (err) {
     console.log('[COPILOT] CopilotOverlay.open threw', String(err));
   }
