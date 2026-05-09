@@ -6,6 +6,7 @@ module.exports = {
   ],
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
+    'index.js',
     '!src/**/index.ts',
     // Interface-only / pure-type modules — TS strips them at runtime
     // so istanbul reports 0/0 for everything. The contracts are
