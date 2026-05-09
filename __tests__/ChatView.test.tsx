@@ -328,7 +328,7 @@ describe('ChatView — font scaling', () => {
 });
 
 describe('ChatView — provider rejection', () => {
-  it('appends an Error assistant msg when fakeProvider rejects', async () => {
+  it('appends a sanitized Error assistant msg when fakeProvider rejects', async () => {
     const fp = require('../src/providers/fakeProvider').default;
     const spy = jest.spyOn(fp, 'send').mockRejectedValueOnce(new Error('boom'));
     const log = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -339,9 +339,38 @@ describe('ChatView — provider rejection', () => {
       });
       await flushFakeProvider();
       const text = findAllText(tree).join(' | ');
-      expect(text).toContain('Error: Error: boom');
-      // The thinking placeholder should be gone.
+      // Generic raw Error('boom') should map to the catch-all
+      // user-facing summary; the raw message must not leak.
+      expect(text).toContain('Error: Provider request failed.');
+      expect(text).not.toContain('boom');
       expect(text).not.toMatch(/^\s*…\s*$/);
+      // Detailed log line still carries the raw error for ops.
+      const lines = log.mock.calls.map(c => c.join(' '));
+      expect(lines.some(l => l.includes('Error: boom'))).toBe(true);
+    } finally {
+      spy.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it('shows an HTTP status summary for upstream HTTP errors', async () => {
+    const fp = require('../src/providers/fakeProvider').default;
+    const spy = jest
+      .spyOn(fp, 'send')
+      .mockRejectedValueOnce(
+        new Error('anthropic: HTTP 401 — {"error":"invalid api key"}'),
+      );
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const {tree} = render();
+      act(() => {
+        findByTestID(tree, 'chat-action-summarize').props.onPress();
+      });
+      await flushFakeProvider();
+      const text = findAllText(tree).join(' | ');
+      expect(text).toContain('Error: anthropic: HTTP 401');
+      // Body text and api-key reference should not surface in the UI.
+      expect(text).not.toContain('invalid api key');
     } finally {
       spy.mockRestore();
       log.mockRestore();

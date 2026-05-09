@@ -39,6 +39,7 @@ import type {KeyFile} from '../types';
 import {composeUserText} from './composePrompt';
 import {buildMarkdownStyles} from './markdownStyles';
 import {markdownToPlainText} from './markdownToPlain';
+import {sanitizeProviderError} from './sanitizeProviderError';
 import {SYSTEM_PROMPT} from './systemPrompt';
 import Toggle from './Toggle';
 import {useProviderClient} from './useProviderClient';
@@ -203,7 +204,10 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         ];
       });
     } catch (err) {
+      // Detailed error stays in console for ops; the bubble shows a
+      // short summary that doesn't leak HTTP bodies / request ids.
       console.log('[COPILOT_CHAT] sendUserMessage failed', String(err));
+      const userVisible = sanitizeProviderError(err);
       setMessages(curr => {
         const without = curr.filter(m => m.id !== thinkingMsg.id);
         return [
@@ -211,7 +215,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
           {
             id: newId(),
             role: 'assistant',
-            text: `Error: ${String(err)}`,
+            text: `Error: ${userVisible}`,
           },
         ];
       });
