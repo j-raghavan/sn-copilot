@@ -626,6 +626,50 @@ describe('ChatView — keyFile prop wires real provider client', () => {
   });
 });
 
+describe('ChatView — hung send timeout', () => {
+  it('aborts a hung request after the send timeout and releases the in-flight guard', async () => {
+    const fp = require('../src/providers/fakeProvider').default;
+    const guard = require('../src/reentrancy/inFlightGuard');
+    // The mock never resolves on its own — only the AbortSignal
+    // wakes it up, mirroring the way fetch behaves on a real hang.
+    const sendSpy = jest.spyOn(fp, 'send').mockImplementation(((req: {
+      signal: AbortSignal;
+    }) =>
+      new Promise((_, reject) => {
+        req.signal.addEventListener('abort', () =>
+          reject(new Error('aborted')),
+        );
+      })) as unknown as typeof fp.send);
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const {tree} = render();
+      act(() => {
+        findByTestID(tree, 'chat-action-summarize').props.onPress();
+      });
+      // Drain initial microtasks so getPageContext + sendSpy are
+      // wired up before we advance the clock.
+      await act(async () => {
+        for (let i = 0; i < 3; i++) {
+          await Promise.resolve();
+        }
+      });
+      expect(guard.isInFlight()).toBe(true);
+      // Advance past the 60s send timeout → controller aborts → the
+      // mocked send rejects → finally block releases the guard.
+      await act(async () => {
+        jest.advanceTimersByTime(60_000);
+        for (let i = 0; i < 8; i++) {
+          await Promise.resolve();
+        }
+      });
+      expect(guard.isInFlight()).toBe(false);
+    } finally {
+      sendSpy.mockRestore();
+      log.mockRestore();
+    }
+  });
+});
+
 describe('ChatView — PII redaction enforcement', () => {
   const seedContext = (): void => {
     const {setPageContext} = require('../src/scope/pageContext');

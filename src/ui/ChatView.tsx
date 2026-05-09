@@ -43,6 +43,12 @@ import {SYSTEM_PROMPT} from './systemPrompt';
 import Toggle from './Toggle';
 import {useProviderClient} from './useProviderClient';
 
+// Hard ceiling on a single send. Real providers usually answer in
+// under 10s; 60s leaves headroom for slow networks. The timeout
+// aborts the request and unblocks the in-flight guard so a hung
+// call can never permanently lock further sends.
+const SEND_TIMEOUT_MS = 60_000;
+
 // Three-step font scaling. Scale factors keep e-ink rendering
 // readable across 7.8" and 10.3" devices without per-device tables.
 const FONT_SIZES = ['S', 'M', 'L'] as const;
@@ -151,6 +157,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     console.log(`[COPILOT_CHAT] sendUserMessage text=${trimmed.slice(0, 40)}`);
 
     const ctl = new AbortController();
+    const timeoutId = setTimeout(() => ctl.abort(), SEND_TIMEOUT_MS);
     try {
       // pageContext is populated as a Promise at sidebar-tap time
       // so the popup can open before screenshot + OCR finishes.
@@ -205,6 +212,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         ];
       });
     } finally {
+      clearTimeout(timeoutId);
       release();
       setBusy(false);
     }
