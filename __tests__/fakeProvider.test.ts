@@ -31,7 +31,7 @@ const makeReq = (
 describe('fakeProvider', () => {
   it('exposes the ProviderClient shape', () => {
     const client: ProviderClient = fakeProvider;
-    expect(client.id).toBe('anthropic');
+    expect(client.id).toBe('fake');
     expect(typeof client.send).toBe('function');
   });
 

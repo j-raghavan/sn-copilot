@@ -14,7 +14,6 @@ import type {
   ProviderClient,
   ProviderRequest,
   ProviderResponse,
-  ProviderId,
 } from './ProviderClient';
 
 const FAKE_LATENCY_MS = 600;
@@ -80,7 +79,7 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
   });
 
 export const fakeProvider: ProviderClient = {
-  id: 'anthropic' satisfies ProviderId,
+  id: 'fake',
   async send(
     req: ProviderRequest,
     opts: {apiKey: string; model: string},

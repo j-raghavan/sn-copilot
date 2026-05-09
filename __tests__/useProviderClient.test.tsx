@@ -32,7 +32,7 @@ const render = (
 describe('useProviderClient', () => {
   it('falls back to fakeProvider when keyFile is undefined', () => {
     const {readout} = render(undefined);
-    expect(readout()).toBe('anthropic|fake|fake-model-1');
+    expect(readout()).toBe('fake|fake|fake-model-1');
   });
 
   it('returns the real provider when keyFile is present', () => {
