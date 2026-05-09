@@ -634,14 +634,19 @@ build_android_apk() {
     # Ship the release variant — `release` build type now drives the
     # release signingConfig (env-driven; debug-keystore fallback) and
     # carries no debuggable flag.
+    # --no-daemon: CI runs are one-shot so the daemon's only benefit
+    # is gone, and on Windows it kept Start-Process -Wait blocked for
+    # ~20 min after gradle finished while the daemon held inherited
+    # handles. Linux didn't hit the same bug, but the flag is cheap
+    # and keeps both platforms exiting cleanly.
     write_color_output "Running gradle task: buildCustomApkRelease..." "Blue"
     local gradlew_path="$android_dir/gradlew"
     (cd "$android_dir"
         if [[ -f "$gradlew_path" ]]; then
             chmod +x "$gradlew_path"
-            "$gradlew_path" buildCustomApkRelease
+            "$gradlew_path" buildCustomApkRelease --no-daemon
         elif command -v gradle >/dev/null 2>&1; then
-            gradle buildCustomApkRelease
+            gradle buildCustomApkRelease --no-daemon
         else
             write_color_output "gradle/gradlew not found" "Red"; return 1
         fi

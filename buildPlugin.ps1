@@ -813,12 +813,18 @@ function Build-AndroidApk {
             }
             
             # Execute gradle build
-            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'gradlew.bat', 'buildCustomApkRelease' -Wait -PassThru -NoNewWindow
+            # --no-daemon: Start-Process -NoNewWindow -Wait waits for
+            # every subprocess that inherits the parent's handles. The
+            # gradle daemon stays alive after the build finishes,
+            # which made CI hang ~20 min after BUILD SUCCESSFUL until
+            # the runner timeout fired. CI runs are one-shot so the
+            # daemon's only benefit is gone anyway.
+            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'gradlew.bat', 'buildCustomApkRelease', '--no-daemon' -Wait -PassThru -NoNewWindow
             $buildResult = $process.ExitCode
         }
         elseif (Get-Command 'gradle' -ErrorAction SilentlyContinue) {
             Write-ColorOutput 'Using gradle to execute buildCustomApkRelease task...' 'Green'
-            $process = Start-Process -FilePath 'gradle' -ArgumentList 'buildCustomApkRelease' -Wait -PassThru -NoNewWindow
+            $process = Start-Process -FilePath 'gradle' -ArgumentList 'buildCustomApkRelease', '--no-daemon' -Wait -PassThru -NoNewWindow
             $buildResult = $process.ExitCode
         }
         else {
