@@ -117,6 +117,37 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
         run: npm version "$VERSION" --no-git-tag-version
 
+      - name: Bump README version badge (runner only)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ ! -f README.md ]; then
+            echo "README.md missing — skipping badge bump."
+            exit 0
+          fi
+          # Replace the shields.io version badge so the rendered README
+          # tracks the just-determined release version. Pinning the
+          # match to the badge URL avoids touching the cost / coverage
+          # tables that also contain semver-shaped strings.
+          python3 - "$VERSION" <<'PY'
+          import os, re, sys
+          version = sys.argv[1]
+          path = "README.md"
+          with open(path, "r", encoding="utf-8") as f:
+              text = f.read()
+          pattern = re.compile(
+              r'(!\[Version\]\(https://img\.shields\.io/badge/version-)[^-]+(-blue\))'
+          )
+          new_text, n = pattern.subn(rf'\g<1>{version}\g<2>', text)
+          if n == 0:
+              print("Version badge not found — leaving README untouched.")
+          else:
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(new_text)
+              print(f"Updated version badge → {version} ({n} match).")
+          PY
+
       - name: Build plugin
         run: |
           chmod +x buildPlugin.sh
@@ -138,6 +169,10 @@ jobs:
           # it too so the repo's PluginConfig.json doesn't drift out of
           # sync with the git tag.
           if [ -f PluginConfig.json ]; then git add PluginConfig.json; fi
+          # README's shields.io version badge is rewritten in the bump
+          # step above so the repo's rendered README stays in lockstep
+          # with the release tag.
+          if [ -f README.md ]; then git add README.md; fi
           git commit -m "chore(release): $TAG"
           git push origin HEAD:master
           git tag -a "$TAG" -m "$TAG"
