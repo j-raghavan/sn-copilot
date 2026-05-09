@@ -5,8 +5,11 @@ playbook/
 *.log
 .DS_Store
 
-# Local key files (developer's own; never commit)
+# Local key files (developer's own; never commit). The canonical
+# templates under templates/ are NOT ignored — those are placeholders
+# with REPLACE-ME tokens, not real key material.
 copilot-key-*.txt
+!templates/copilot-key-*.txt
 
 # RN build artifacts
 android/.gradle/

@@ -110,10 +110,12 @@ Keys live on disk in `MyStyle/SnCopilot/copilot-key-*.txt` and in process memory
 - Logs a header containing `Authorization` / `x-api-key`, or a query param named `key`.
 - Echoes a key into an error message or stack trace.
 
-### Image mode does not redact
-`mode=image` sends the raster as-is. PII redaction (`src/redact/`) is wired only for `mode=text`. Flag any PR that:
+### Vision capability is derived from provider id, not configurable
+`isImageCapableProvider(provider)` is the single source of truth: anthropic / openai / gemini get the page image, deepseek does not. There's no `mode=` field, no chat-header PII toggle, no Settings vision toggle — all removed because they were leaky abstractions (mode= broke handwriting Notes when set to text on a vision provider; PII redaction shipped while the image carried the same content was theatre). Flag any PR that:
+- Reintroduces a per-key opt-out for image attachment.
+- Adds a user-facing PII toggle that scrubs text without dropping the image.
 - Adds opaque "redaction" to the image path that doesn't actually mask pixels (false advertising).
-- Sends a redacted text alongside an unredacted image (defeats the purpose of redaction).
+- Sends a redacted text alongside an unredacted image on a vision provider.
 
 ### Insert is NOTE-only
 `PluginFileAPI.insertElements` is the only Insert path; it is not callable for DOC/PDF/EPUB containers, and modifying source PDFs is hostile UX besides. The result panel hides the Insert button in DOC scopes. Flag any PR that:
