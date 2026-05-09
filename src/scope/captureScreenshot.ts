@@ -1,18 +1,24 @@
-// Captures the current note page as a PNG and base64-encodes it for
+// Captures the current page as a PNG and base64-encodes it for
 // attachment to a provider request.
 //
-// Two-step: PluginCommAPI tells us which file/page is current;
-// PluginFileAPI.generateNotePng renders it (white background, 1x);
-// the bytes are read back via fetch('file://...').
-//
-// Only `.note` files are supported. Documents (`.pdf` / `.epub`)
-// would need a different SDK entrypoint; we log + skip them so the
-// chat degrades gracefully to text-only mode.
+// Two paths share the same bytes-from-disk read step but use
+// different SDK entrypoints:
+//   .note         → PluginFileAPI.generateNotePng + getElements +
+//                   recognizeElements (typed text + handwriting OCR).
+//   .pdf / .epub  → PluginDocAPI.generateDocImage + getCurrentDocText.
+// Other extensions are logged and skipped so the chat degrades
+// gracefully to text-only mode without claiming context it doesn't
+// have.
 
 import {arrayBufferToBase64} from './base64';
 import type {PageContext} from './pageContext';
 
 const TAG = '[captureScreenshot]';
+
+// Doc renders take a required size; Supernote 7.8" portrait is the
+// most common form factor and produces a readable page at this
+// resolution. Callers can override via CaptureDeps.docImageSize.
+const DEFAULT_DOC_IMAGE_SIZE = {width: 1404, height: 1872};
 
 export type CommLike = {
   getCurrentFilePath: () => Promise<unknown>;
@@ -37,6 +43,16 @@ export type FileApiLike = {
   getPageSize: (notePath: string, page: number) => Promise<unknown>;
 };
 
+export type DocApiLike = {
+  generateDocImage: (
+    docPath: string,
+    page: number,
+    pngPath: string,
+    size: {width: number; height: number},
+  ) => Promise<unknown>;
+  getCurrentDocText: (page: number) => Promise<unknown>;
+};
+
 export type ManagerLike = {
   getPluginDirPath: () => Promise<string | null | undefined>;
 };
@@ -49,9 +65,11 @@ export type Logger = {
 export type CaptureDeps = {
   comm: CommLike;
   file: FileApiLike;
+  doc: DocApiLike;
   manager: ManagerLike;
   fetchFn?: typeof fetch;
   logger?: Logger;
+  docImageSize?: {width: number; height: number};
 };
 
 // Each capture writes to a unique scratch path so two captures kicked
@@ -85,7 +103,58 @@ const unwrapNumber = (raw: unknown): number | null => {
   return null;
 };
 
-const isNoteFile = (path: string): boolean => /\.note$/i.test(path);
+type FileKind = 'note' | 'doc' | 'unsupported';
+
+const classifyFile = (path: string): FileKind => {
+  if (/\.note$/i.test(path)) {
+    return 'note';
+  }
+  if (/\.(pdf|epub)$/i.test(path)) {
+    return 'doc';
+  }
+  return 'unsupported';
+};
+
+const readPngAsBase64 = async (
+  fetchFn: typeof fetch,
+  pngPath: string,
+  logger: Logger,
+): Promise<{base64: string; byteLength: number} | null> => {
+  let bytes: ArrayBuffer;
+  try {
+    const res = await fetchFn(`file://${pngPath}`);
+    if (!res.ok) {
+      logger.warn(`${TAG} png fetch returned status ${res.status}`);
+      return null;
+    }
+    bytes = await res.arrayBuffer();
+  } catch (e) {
+    logger.warn(`${TAG} png fetch threw: ${(e as Error).message}`);
+    return null;
+  }
+  return {
+    base64: arrayBufferToBase64(bytes),
+    byteLength: bytes.byteLength,
+  };
+};
+
+const resolveScratchPath = async (
+  manager: ManagerLike,
+  logger: Logger,
+): Promise<string | null> => {
+  let pluginDir: string | null | undefined;
+  try {
+    pluginDir = await manager.getPluginDirPath();
+  } catch (e) {
+    logger.warn(`${TAG} getPluginDirPath threw: ${(e as Error).message}`);
+    return null;
+  }
+  // Some firmware builds return null/undefined for getPluginDirPath
+  // before any plugin file has been written — fall back to a known-
+  // writable Android-data path the SDK uses internally.
+  const dir = pluginDir && pluginDir.length > 0 ? pluginDir : '/sdcard/Android/data';
+  return `${dir}/${nextScratchFilename()}`;
+};
 
 // Walks an Element[] and returns concatenated typed-text content
 // (textBox.textContentFull). Defensive against shape drift — the SDK
@@ -194,46 +263,14 @@ const buildPageText = async (
   return parts.join('\n\n');
 };
 
-export const captureCurrentPage = async (
+const captureNotePage = async (
   deps: CaptureDeps,
+  notePath: string,
+  page: number,
+  pngPath: string,
+  fetchFn: typeof fetch,
+  logger: Logger,
 ): Promise<PageContext | null> => {
-  const fetchFn = deps.fetchFn ?? globalThis.fetch;
-  const noop = (): void => {};
-  const logger: Logger = deps.logger ?? {log: noop, warn: noop};
-
-  let notePath: string | null;
-  let page: number | null;
-  try {
-    notePath = unwrapString(await deps.comm.getCurrentFilePath());
-    page = unwrapNumber(await deps.comm.getCurrentPageNum());
-  } catch (e) {
-    logger.warn(`${TAG} comm probe threw: ${(e as Error).message}`);
-    return null;
-  }
-  if (notePath === null || page === null) {
-    logger.log(`${TAG} no current file/page — skipping screenshot`);
-    return null;
-  }
-  if (!isNoteFile(notePath)) {
-    logger.log(
-      `${TAG} current file is not a .note (${notePath}) — skipping screenshot`,
-    );
-    return null;
-  }
-
-  let pluginDir: string | null | undefined;
-  try {
-    pluginDir = await deps.manager.getPluginDirPath();
-  } catch (e) {
-    logger.warn(`${TAG} getPluginDirPath threw: ${(e as Error).message}`);
-    return null;
-  }
-  // Some firmware builds return null/undefined for getPluginDirPath
-  // before any plugin file has been written — fall back to a known-
-  // writable Android-data path the SDK uses internally.
-  const dir = pluginDir && pluginDir.length > 0 ? pluginDir : '/sdcard/Android/data';
-  const pngPath = `${dir}/${nextScratchFilename()}`;
-
   let renderResp: unknown;
   try {
     renderResp = await deps.file.generateNotePng({
@@ -258,20 +295,10 @@ export const captureCurrentPage = async (
     return null;
   }
 
-  let bytes: ArrayBuffer;
-  try {
-    const res = await fetchFn(`file://${pngPath}`);
-    if (!res.ok) {
-      logger.warn(`${TAG} png fetch returned status ${res.status}`);
-      return null;
-    }
-    bytes = await res.arrayBuffer();
-  } catch (e) {
-    logger.warn(`${TAG} png fetch threw: ${(e as Error).message}`);
+  const png = await readPngAsBase64(fetchFn, pngPath, logger);
+  if (png === null) {
     return null;
   }
-
-  const screenshotBase64 = arrayBufferToBase64(bytes);
   // Best-effort transcription of the page text. If extraction fails
   // we still return the screenshot — image-capable providers can
   // work from that alone; DeepSeek will get an empty pageText and
@@ -280,14 +307,112 @@ export const captureCurrentPage = async (
 
   logger.log(
     `${TAG} captured note=${notePath} page=${page} ` +
-      `bytes=${bytes.byteLength} base64.length=${screenshotBase64.length} ` +
+      `bytes=${png.byteLength} base64.length=${png.base64.length} ` +
       `pageText.length=${pageText.length}`,
   );
   return {
     notePath,
     page,
     screenshotPath: pngPath,
-    screenshotBase64,
+    screenshotBase64: png.base64,
     pageText,
   };
+};
+
+const captureDocPage = async (
+  deps: CaptureDeps,
+  docPath: string,
+  page: number,
+  pngPath: string,
+  fetchFn: typeof fetch,
+  logger: Logger,
+): Promise<PageContext | null> => {
+  const size = deps.docImageSize ?? DEFAULT_DOC_IMAGE_SIZE;
+
+  let renderResp: unknown;
+  try {
+    renderResp = await deps.doc.generateDocImage(docPath, page, pngPath, size);
+  } catch (e) {
+    logger.warn(`${TAG} generateDocImage threw: ${(e as Error).message}`);
+    return null;
+  }
+  if (
+    !renderResp ||
+    typeof renderResp !== 'object' ||
+    (renderResp as {success?: unknown}).success !== true
+  ) {
+    logger.warn(
+      `${TAG} generateDocImage failed: ${JSON.stringify(renderResp)}`,
+    );
+    return null;
+  }
+
+  const png = await readPngAsBase64(fetchFn, pngPath, logger);
+  if (png === null) {
+    return null;
+  }
+  // PluginDocAPI.getCurrentDocText already returns extracted text for
+  // the page (PDFs ship with text layers; EPUBs are HTML). Treat it
+  // as best-effort like the note path — a failure shouldn't drop the
+  // screenshot.
+  let pageText = '';
+  try {
+    pageText = unwrapString(await deps.doc.getCurrentDocText(page)) ?? '';
+  } catch (e) {
+    logger.warn(
+      `${TAG} getCurrentDocText threw: ${(e as Error).message} — text path skipped`,
+    );
+  }
+
+  logger.log(
+    `${TAG} captured doc=${docPath} page=${page} ` +
+      `bytes=${png.byteLength} base64.length=${png.base64.length} ` +
+      `pageText.length=${pageText.length}`,
+  );
+  return {
+    notePath: docPath,
+    page,
+    screenshotPath: pngPath,
+    screenshotBase64: png.base64,
+    pageText,
+  };
+};
+
+export const captureCurrentPage = async (
+  deps: CaptureDeps,
+): Promise<PageContext | null> => {
+  const fetchFn = deps.fetchFn ?? globalThis.fetch;
+  const noop = (): void => {};
+  const logger: Logger = deps.logger ?? {log: noop, warn: noop};
+
+  let filePath: string | null;
+  let page: number | null;
+  try {
+    filePath = unwrapString(await deps.comm.getCurrentFilePath());
+    page = unwrapNumber(await deps.comm.getCurrentPageNum());
+  } catch (e) {
+    logger.warn(`${TAG} comm probe threw: ${(e as Error).message}`);
+    return null;
+  }
+  if (filePath === null || page === null) {
+    logger.log(`${TAG} no current file/page — skipping screenshot`);
+    return null;
+  }
+  const kind = classifyFile(filePath);
+  if (kind === 'unsupported') {
+    logger.log(
+      `${TAG} unsupported file type (${filePath}) — skipping screenshot`,
+    );
+    return null;
+  }
+
+  const pngPath = await resolveScratchPath(deps.manager, logger);
+  if (pngPath === null) {
+    return null;
+  }
+
+  if (kind === 'note') {
+    return captureNotePage(deps, filePath, page, pngPath, fetchFn, logger);
+  }
+  return captureDocPage(deps, filePath, page, pngPath, fetchFn, logger);
 };

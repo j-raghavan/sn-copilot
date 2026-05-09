@@ -47,6 +47,7 @@ jest.mock('sn-plugin-lib', () => ({
   },
   PluginCommAPI: {},
   PluginFileAPI: {},
+  PluginDocAPI: {},
   FileUtils: {
     exists: jest.fn(async () => false),
     listFiles: jest.fn(async () => null),

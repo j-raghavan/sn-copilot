@@ -58,6 +58,17 @@ const okManager = {
   getPluginDirPath: jest.fn(async () => '/data/user/0/com.sncopilot/files'),
 };
 
+// Doc API stub — used only when filePath is .pdf or .epub. The
+// note-path tests still pass it in (cheap, keeps the call sites
+// uniform) but never trigger it.
+const okDoc = {
+  generateDocImage: jest.fn(async () => ({success: true, result: true})),
+  getCurrentDocText: jest.fn(async () => ({
+    success: true,
+    result: 'doc text content',
+  })),
+};
+
 const okFetch = jest.fn(async () => ({
   ok: true,
   arrayBuffer: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer,
@@ -71,6 +82,8 @@ beforeEach(() => {
   okFile.getElements.mockClear();
   okFile.getPageSize.mockClear();
   okManager.getPluginDirPath.mockClear();
+  okDoc.generateDocImage.mockClear();
+  okDoc.getCurrentDocText.mockClear();
 });
 
 describe('captureCurrentPage — happy path', () => {
@@ -78,6 +91,7 @@ describe('captureCurrentPage — happy path', () => {
     const ctx = await captureCurrentPage({
       comm: okComm,
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -123,6 +137,7 @@ describe('captureCurrentPage — happy path', () => {
           throw new Error('elements boom');
         }),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -141,6 +156,7 @@ describe('captureCurrentPage — happy path', () => {
         ...okFile,
         getElements: jest.fn(async () => ({success: true, result: []})),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -157,6 +173,7 @@ describe('captureCurrentPage — happy path', () => {
         ...okFile,
         getPageSize: jest.fn(async () => ({success: false, result: null})),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -176,6 +193,7 @@ describe('captureCurrentPage — happy path', () => {
         })),
       },
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -194,6 +212,7 @@ describe('captureCurrentPage — happy path', () => {
         })),
       },
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -208,6 +227,7 @@ describe('captureCurrentPage — happy path', () => {
         ...okFile,
         getElements: jest.fn(async () => ({success: true, result: null})),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -223,6 +243,7 @@ describe('captureCurrentPage — happy path', () => {
         ...okFile,
         getPageSize: jest.fn(async () => null),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -241,6 +262,7 @@ describe('captureCurrentPage — happy path', () => {
           result: {width: 'oops', height: 1872},
         })),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -255,6 +277,7 @@ describe('captureCurrentPage — happy path', () => {
         ...okFile,
         getElements: jest.fn(async () => null),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -286,6 +309,7 @@ describe('captureCurrentPage — happy path', () => {
           ],
         })),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -298,6 +322,7 @@ describe('captureCurrentPage — happy path', () => {
     const ctx = await captureCurrentPage({
       comm: okComm,
       file: okFile,
+      doc: okDoc,
       manager: m,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -312,6 +337,7 @@ describe('captureCurrentPage — happy path', () => {
     const ctx = await captureCurrentPage({
       comm: okComm,
       file: okFile,
+      doc: okDoc,
       manager: m,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -325,6 +351,7 @@ describe('captureCurrentPage — happy path', () => {
     const a = await captureCurrentPage({
       comm: okComm,
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -332,6 +359,7 @@ describe('captureCurrentPage — happy path', () => {
     const b = await captureCurrentPage({
       comm: okComm,
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -352,6 +380,7 @@ describe('captureCurrentPage — happy path', () => {
       const ctx = await captureCurrentPage({
         comm: okComm,
         file: okFile,
+        doc: okDoc,
         manager: okManager,
       });
       expect(ctx).not.toBeNull();
@@ -371,6 +400,7 @@ describe('captureCurrentPage — early returns', () => {
         }),
       },
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -389,6 +419,7 @@ describe('captureCurrentPage — early returns', () => {
         getCurrentPageNum: jest.fn(async () => ({success: true, result: 0})),
       },
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -407,6 +438,7 @@ describe('captureCurrentPage — early returns', () => {
         getCurrentPageNum: jest.fn(async () => ({success: false})),
       },
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -414,24 +446,25 @@ describe('captureCurrentPage — early returns', () => {
     expect(ctx).toBeNull();
   });
 
-  it('returns null for non-.note file (e.g. .pdf)', async () => {
+  it('returns null for unsupported file types (e.g. .txt)', async () => {
     const ctx = await captureCurrentPage({
       comm: {
         ...okComm,
         getCurrentFilePath: jest.fn(async () => ({
           success: true,
-          result: '/sd/docs/spec.pdf',
+          result: '/sd/docs/notes.txt',
         })),
         getCurrentPageNum: jest.fn(async () => ({success: true, result: 1})),
       },
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
     });
     expect(ctx).toBeNull();
     expect(silentLogger.log).toHaveBeenCalledWith(
-      expect.stringContaining('not a .note'),
+      expect.stringContaining('unsupported file type'),
     );
   });
 
@@ -439,6 +472,7 @@ describe('captureCurrentPage — early returns', () => {
     const ctx = await captureCurrentPage({
       comm: okComm,
       file: okFile,
+      doc: okDoc,
       manager: {
         getPluginDirPath: jest.fn(async () => {
           throw new Error('dir lookup failed');
@@ -462,6 +496,7 @@ describe('captureCurrentPage — early returns', () => {
           throw new Error('render boom');
         }),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -479,6 +514,7 @@ describe('captureCurrentPage — early returns', () => {
         ...okFile,
         generateNotePng: jest.fn(async () => ({success: false, error: {code: 9}})),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -496,6 +532,7 @@ describe('captureCurrentPage — early returns', () => {
         ...okFile,
         generateNotePng: jest.fn(async () => null),
       },
+      doc: okDoc,
       manager: okManager,
       fetchFn: okFetch,
       logger: silentLogger,
@@ -507,6 +544,7 @@ describe('captureCurrentPage — early returns', () => {
     const ctx = await captureCurrentPage({
       comm: okComm,
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: (jest.fn(async () => ({
         ok: false,
@@ -524,6 +562,7 @@ describe('captureCurrentPage — early returns', () => {
     const ctx = await captureCurrentPage({
       comm: okComm,
       file: okFile,
+      doc: okDoc,
       manager: okManager,
       fetchFn: (jest.fn(async () => {
         throw new Error('IO');
@@ -534,5 +573,142 @@ describe('captureCurrentPage — early returns', () => {
     expect(silentLogger.warn).toHaveBeenCalledWith(
       expect.stringContaining('png fetch threw'),
     );
+  });
+});
+
+describe('captureCurrentPage — doc path (.pdf / .epub)', () => {
+  const docComm = (path: string) => ({
+    ...okComm,
+    getCurrentFilePath: jest.fn(async () => ({success: true, result: path})),
+    getCurrentPageNum: jest.fn(async () => ({success: true, result: 3})),
+  });
+
+  it('renders + reads text for a .pdf via PluginDocAPI', async () => {
+    const ctx = await captureCurrentPage({
+      comm: docComm('/sd/docs/spec.pdf'),
+      file: okFile,
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+    });
+    expect(ctx).not.toBeNull();
+    expect(ctx?.notePath).toBe('/sd/docs/spec.pdf');
+    expect(ctx?.page).toBe(3);
+    expect(ctx?.pageText).toBe('doc text content');
+    expect(ctx?.screenshotBase64.length).toBeGreaterThan(0);
+    // Note APIs must NOT be invoked on the doc path.
+    expect(okFile.generateNotePng).not.toHaveBeenCalled();
+    // Doc API was called with the resolved scratch path + default size.
+    expect(okDoc.generateDocImage).toHaveBeenCalledWith(
+      '/sd/docs/spec.pdf',
+      3,
+      ctx?.screenshotPath,
+      {width: 1404, height: 1872},
+    );
+    expect(okDoc.getCurrentDocText).toHaveBeenCalledWith(3);
+  });
+
+  it('also handles .epub (case-insensitive)', async () => {
+    const ctx = await captureCurrentPage({
+      comm: docComm('/sd/docs/Book.EPUB'),
+      file: okFile,
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+    });
+    expect(ctx).not.toBeNull();
+    expect(okDoc.generateDocImage).toHaveBeenCalled();
+  });
+
+  it('honours docImageSize override', async () => {
+    await captureCurrentPage({
+      comm: docComm('/sd/docs/spec.pdf'),
+      file: okFile,
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+      docImageSize: {width: 800, height: 1000},
+    });
+    expect(okDoc.generateDocImage).toHaveBeenCalledWith(
+      '/sd/docs/spec.pdf',
+      3,
+      expect.any(String),
+      {width: 800, height: 1000},
+    );
+  });
+
+  it('returns null when generateDocImage rejects', async () => {
+    const ctx = await captureCurrentPage({
+      comm: docComm('/sd/docs/spec.pdf'),
+      file: okFile,
+      doc: {
+        ...okDoc,
+        generateDocImage: jest.fn(async () => {
+          throw new Error('render boom');
+        }),
+      },
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+    });
+    expect(ctx).toBeNull();
+    expect(silentLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('generateDocImage threw'),
+    );
+  });
+
+  it('returns null when generateDocImage reports success: false', async () => {
+    const ctx = await captureCurrentPage({
+      comm: docComm('/sd/docs/spec.pdf'),
+      file: okFile,
+      doc: {
+        ...okDoc,
+        generateDocImage: jest.fn(async () => ({success: false})),
+      },
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+    });
+    expect(ctx).toBeNull();
+    expect(silentLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('generateDocImage failed'),
+    );
+  });
+
+  it('still returns the screenshot when getCurrentDocText throws', async () => {
+    const ctx = await captureCurrentPage({
+      comm: docComm('/sd/docs/spec.pdf'),
+      file: okFile,
+      doc: {
+        ...okDoc,
+        getCurrentDocText: jest.fn(async () => {
+          throw new Error('text boom');
+        }),
+      },
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+    });
+    expect(ctx).not.toBeNull();
+    expect(ctx?.pageText).toBe('');
+    expect(ctx?.screenshotBase64.length).toBeGreaterThan(0);
+  });
+
+  it('falls back to empty pageText when getCurrentDocText returns non-string', async () => {
+    const ctx = await captureCurrentPage({
+      comm: docComm('/sd/docs/spec.pdf'),
+      file: okFile,
+      doc: {
+        ...okDoc,
+        getCurrentDocText: jest.fn(async () => ({success: true, result: null})),
+      },
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+    });
+    expect(ctx?.pageText).toBe('');
   });
 });

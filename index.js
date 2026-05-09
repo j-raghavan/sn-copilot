@@ -2,7 +2,12 @@ import {AppRegistry, Image} from 'react-native';
 import App from './App';
 import CopilotPanel from './src/ui/CopilotPanel';
 import {name as appName} from './app.json';
-import {PluginManager, PluginCommAPI, PluginFileAPI} from 'sn-plugin-lib';
+import {
+  PluginManager,
+  PluginCommAPI,
+  PluginFileAPI,
+  PluginDocAPI,
+} from 'sn-plugin-lib';
 import {
   installPluginRouter,
   subscribeToButtonEvents,
@@ -103,6 +108,7 @@ subscribeToButtonEvents(async event => {
   const capturePromise = captureCurrentPage({
     comm: PluginCommAPI,
     file: PluginFileAPI,
+    doc: PluginDocAPI,
     manager: PluginManager,
     logger: consoleLogger,
   }).catch(e => {
