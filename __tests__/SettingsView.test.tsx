@@ -353,3 +353,132 @@ describe('SettingsView — Test Connection no-op when no resolution', () => {
     expect(maybeFindByTestID(tree, 'settings-test-status')).toBeNull();
   });
 });
+
+describe('SettingsView — unmount safety', () => {
+  it('does not setState when unmounted before discovery resolves', async () => {
+    let resolveList!: (val: FileEntry[] | null) => void;
+    mockListFiles.mockImplementationOnce(
+      () =>
+        new Promise<FileEntry[] | null>(r => {
+          resolveList = r;
+        }),
+    );
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const {tree} = renderSettings();
+      // Unmount before listFiles resolves.
+      act(() => {
+        tree.unmount();
+      });
+      // Now resolve — the post-await mountedRef guard should prevent
+      // any setState (otherwise React would warn via console.error).
+      await act(async () => {
+        resolveList(null);
+        await flushPromises();
+      });
+      const sawWarning = errSpy.mock.calls.some(c =>
+        String(c[0] ?? '').includes('unmounted component'),
+      );
+      expect(sawWarning).toBe(false);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it('does not setState when unmounted before Test Connection resolves', async () => {
+    mockListFiles.mockResolvedValueOnce([
+      fileEntry(
+        '/storage/emulated/0/MyStyle/SnCopilot/copilot-key-anthropic.txt',
+      ),
+    ]);
+    let resolveSend!: (val: unknown) => void;
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith('file://')) {
+        return fileResp(
+          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-x\n',
+        );
+      }
+      // The Anthropic call hangs until resolveSend is invoked.
+      return new Promise(r => {
+        resolveSend = r;
+      });
+    });
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const {tree} = renderSettings();
+      await act(async () => {
+        await flushPromises();
+      });
+      await act(async () => {
+        findByTestID(tree, 'settings-test-connection').props.onPress();
+        await flushPromises();
+      });
+      // Now unmount mid-flight, then resolve the network call.
+      act(() => {
+        tree.unmount();
+      });
+      await act(async () => {
+        resolveSend({
+          ok: true,
+          json: async () => ({
+            content: [{type: 'text', text: 'Hi'}],
+            usage: {input_tokens: 1, output_tokens: 1},
+            model: 'claude-haiku-4-5',
+          }),
+        });
+        await flushPromises();
+      });
+      const sawWarning = errSpy.mock.calls.some(c =>
+        String(c[0] ?? '').includes('unmounted component'),
+      );
+      expect(sawWarning).toBe(false);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it('aborts an in-flight Test Connection on unmount and swallows the rejection', async () => {
+    mockListFiles.mockResolvedValueOnce([
+      fileEntry(
+        '/storage/emulated/0/MyStyle/SnCopilot/copilot-key-anthropic.txt',
+      ),
+    ]);
+    // The Anthropic mock listens on the AbortSignal and rejects when
+    // the controller aborts (mirrors real fetch behaviour).
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('file://')) {
+        return fileResp(
+          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-x\n',
+        );
+      }
+      return new Promise((_, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new Error('aborted')),
+        );
+      });
+    });
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const {tree} = renderSettings();
+      await act(async () => {
+        await flushPromises();
+      });
+      await act(async () => {
+        findByTestID(tree, 'settings-test-connection').props.onPress();
+        await flushPromises();
+      });
+      // Unmount → cleanup aborts the controller → fetch rejects with
+      // 'aborted'. The catch path's mountedRef guard blocks setState.
+      await act(async () => {
+        tree.unmount();
+        await flushPromises();
+      });
+      const sawWarning = errSpy.mock.calls.some(c =>
+        String(c[0] ?? '').includes('unmounted component'),
+      );
+      expect(sawWarning).toBe(false);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+});

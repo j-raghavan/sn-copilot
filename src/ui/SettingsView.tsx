@@ -7,7 +7,7 @@
  * provider and reports OK or the error message.
  */
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {FileUtils} from 'sn-plugin-lib';
 import {discoverKeyFiles, type FileUtilsLike} from '../storage/keyFiles';
@@ -59,6 +59,23 @@ export default function SettingsView(
   const [vision, setVision] = useState<boolean>(initialVision);
   const [testStatus, setTestStatus] = useState<TestStatus>({kind: 'idle'});
 
+  // mountedRef guards every setState that follows an await — without
+  // it, an unmount during slow IO (key-file scan, Test Connection)
+  // produces React's "state update on unmounted component" warning.
+  // testCtlRef holds the in-flight Test Connection AbortController so
+  // unmount can cancel the network call instead of just discarding
+  // its eventual result.
+  const mountedRef = useRef(true);
+  const testCtlRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      testCtlRef.current?.abort();
+      testCtlRef.current = null;
+    };
+  }, []);
+
   // discoverKeyFiles already self-catches IO errors (per-entry +
   // listFiles); resolveActiveProvider is pure. So no outer catch is
   // needed here — any throw would be a genuine bug and should bubble.
@@ -71,6 +88,9 @@ export default function SettingsView(
       fileUtils: FileUtils as unknown as FileUtilsLike,
       logger: consoleLogger,
     });
+    if (!mountedRef.current) {
+      return;
+    }
     const active = resolveActiveProvider(result.files);
     setResolution(active);
     setErrors(result.errors.map(e => `${e.path}: ${e.reason}`));
@@ -95,39 +115,47 @@ export default function SettingsView(
     const active: KeyFile = resolution.active;
     setTestStatus({kind: 'running'});
     const start = Date.now();
+    const ctl = new AbortController();
+    testCtlRef.current = ctl;
+    const timeout = setTimeout(() => ctl.abort(), 30_000);
     try {
       const client = createProviderClient(active.provider);
-      const ctl = new AbortController();
-      const timeout = setTimeout(() => ctl.abort(), 30_000);
-      try {
-        const r = await client.send(
-          {
-            systemPrompt:
-              'You are a helpful assistant. Respond briefly to confirm the connection works.',
-            userText: 'Hello',
-            maxTokens: 64,
-            signal: ctl.signal,
-          },
-          {apiKey: active.key, model: active.model},
-        );
-        setTestStatus({
-          kind: 'ok',
-          latencyMs: r.latencyMs,
-          modelId: r.modelId,
-        });
-        console.log(
-          `[COPILOT_SETTINGS] test connection ok latencyMs=${r.latencyMs} ` +
-            `replyLength=${r.text.length}`,
-        );
-      } finally {
-        clearTimeout(timeout);
+      const r = await client.send(
+        {
+          systemPrompt:
+            'You are a helpful assistant. Respond briefly to confirm the connection works.',
+          userText: 'Hello',
+          maxTokens: 64,
+          signal: ctl.signal,
+        },
+        {apiKey: active.key, model: active.model},
+      );
+      if (!mountedRef.current) {
+        return;
       }
+      setTestStatus({
+        kind: 'ok',
+        latencyMs: r.latencyMs,
+        modelId: r.modelId,
+      });
+      console.log(
+        `[COPILOT_SETTINGS] test connection ok latencyMs=${r.latencyMs} ` +
+          `replyLength=${r.text.length}`,
+      );
     } catch (e) {
+      if (!mountedRef.current) {
+        return;
+      }
       const msg = (e as Error).message;
       setTestStatus({kind: 'error', message: msg});
       console.log(
         `[COPILOT_SETTINGS] test connection failed elapsedMs=${Date.now() - start} err=${msg}`,
       );
+    } finally {
+      clearTimeout(timeout);
+      if (testCtlRef.current === ctl) {
+        testCtlRef.current = null;
+      }
     }
   }, [resolution]);
 
