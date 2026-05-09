@@ -69,7 +69,7 @@ jobs:
         run: npx eslint src/ App.tsx index.js __tests__/
 
       - name: Test
-        run: npx jest
+        run: npx jest --coverage
 
       - name: Determine release version
         id: ver
