@@ -161,13 +161,19 @@ export const parseKeyFile = (
     return {kind: 'parse-error', path, reason: 'missing required field: model'};
   }
 
-  let mode: Mode = 'text';
+  // Default mode follows the provider's vision capability:
+  // anthropic / openai / gemini are image-capable, so handwritten
+  // Notes (which carry their content in the page image, not a text
+  // layer) work out of the box. DeepSeek is text-only — its default
+  // stays 'text'. Explicit mode= in the key file always wins.
+  const defaultMode: Mode = provider === 'deepseek' ? 'text' : 'image';
+  let mode: Mode = defaultMode;
   if (fields.mode !== undefined) {
     if (fields.mode === 'text' || fields.mode === 'image') {
       mode = fields.mode;
     } else {
       logger.warn(
-        `${TAG} ${fileName}: invalid mode="${fields.mode}" — defaulting to text`,
+        `${TAG} ${fileName}: invalid mode="${fields.mode}" — defaulting to ${defaultMode}`,
       );
     }
   }
