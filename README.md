@@ -25,6 +25,15 @@ Most AI features on e-ink readers ship with a vendor-supplied key behind the sce
 
 Here the trade is reversed: you do the 30 seconds of setup once, and from then on every aspect of the LLM interaction — provider choice, model choice, billing, retention, deletion — is under your control.
 
+
+## Demo 
+### v1.0.1
+
+
+https://github.com/user-attachments/assets/a176aae0-a33d-4885-a93f-0a7f63d1e861
+
+
+
 ## Quick start
 
 1. **Pick a provider** and grab a key from their console. We ship templates for four:
