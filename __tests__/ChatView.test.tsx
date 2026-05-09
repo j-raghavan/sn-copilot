@@ -109,6 +109,11 @@ describe('ChatView — initial render', () => {
     expect(allText).toContain('⊡');
   });
 
+  it('renders the Copilot brand icon to the left of the title', () => {
+    const {tree} = render();
+    expect(findByTestID(tree, 'chat-title-icon')).toBeDefined();
+  });
+
   it('PII redaction toggle reflects ON/OFF state', () => {
     const {tree} = render({initialPiiRedaction: true});
     // Toggle renders its current state as visible text ("ON"/"OFF").

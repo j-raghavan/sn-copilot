@@ -23,6 +23,7 @@
  */
 import React, {useCallback, useRef, useState} from 'react';
 import {
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -297,7 +298,16 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
           before that the buttons would be no-ops with no visible
           effect, so we keep the header minimal. */}
       <View style={styles.header}>
-        <Text style={styles.title}>Copilot</Text>
+        <View style={styles.titleRow}>
+          <Image
+            testID="chat-title-icon"
+            accessibilityLabel="Copilot icon"
+            source={require('../../assets/copilot_icon.png')}
+            style={styles.titleIcon}
+            resizeMode="contain"
+          />
+          <Text style={styles.title}>Copilot</Text>
+        </View>
         <View style={styles.headerControls}>
           {hasAssistantReply ? (
             <View testID="chat-font-controls" style={styles.headerControls}>
@@ -534,6 +544,16 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#000000',
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+  },
+  titleIcon: {
+    width: 28,
+    height: 28,
+    marginRight: 8,
   },
   title: {
     fontSize: 26,
