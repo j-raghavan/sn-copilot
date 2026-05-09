@@ -727,10 +727,12 @@ function Build-AndroidApk {
     try {
         Set-Location $androidDir
         
-        # Execute gradle build - use custom buildCustomApkDebug task
+        # Execute gradle build - use custom buildCustomApkRelease task
+        # so the release signingConfig + non-debuggable build type are
+        # what ships in the .snplg artifact.
         $gradlewPath = Join-Path $androidDir 'gradlew.bat'
         if (Test-Path $gradlewPath) {
-            Write-ColorOutput 'Using gradlew.bat to execute buildCustomApkDebug task...' 'Green'
+            Write-ColorOutput 'Using gradlew.bat to execute buildCustomApkRelease task...' 'Green'
             
             # Ensure JAVA_HOME environment variable is set
             if (-not $env:JAVA_HOME) {
@@ -752,12 +754,12 @@ function Build-AndroidApk {
             }
             
             # Execute gradle build
-            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'gradlew.bat', 'buildCustomApkDebug' -Wait -PassThru -NoNewWindow
+            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'gradlew.bat', 'buildCustomApkRelease' -Wait -PassThru -NoNewWindow
             $buildResult = $process.ExitCode
         }
         elseif (Get-Command 'gradle' -ErrorAction SilentlyContinue) {
-            Write-ColorOutput 'Using gradle to execute buildCustomApkDebug task...' 'Green'
-            $process = Start-Process -FilePath 'gradle' -ArgumentList 'buildCustomApkDebug' -Wait -PassThru -NoNewWindow
+            Write-ColorOutput 'Using gradle to execute buildCustomApkRelease task...' 'Green'
+            $process = Start-Process -FilePath 'gradle' -ArgumentList 'buildCustomApkRelease' -Wait -PassThru -NoNewWindow
             $buildResult = $process.ExitCode
         }
         else {

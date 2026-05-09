@@ -631,14 +631,17 @@ build_android_apk() {
     local android_dir="$project_root/android"
     [[ ! -d "$android_dir" ]] && { write_color_output "android directory not found" "Red"; return 1; }
 
-    write_color_output "Running gradle task: buildCustomApkDebug..." "Blue"
+    # Ship the release variant — `release` build type now drives the
+    # release signingConfig (env-driven; debug-keystore fallback) and
+    # carries no debuggable flag.
+    write_color_output "Running gradle task: buildCustomApkRelease..." "Blue"
     local gradlew_path="$android_dir/gradlew"
     (cd "$android_dir"
         if [[ -f "$gradlew_path" ]]; then
             chmod +x "$gradlew_path"
-            "$gradlew_path" buildCustomApkDebug
+            "$gradlew_path" buildCustomApkRelease
         elif command -v gradle >/dev/null 2>&1; then
-            gradle buildCustomApkDebug
+            gradle buildCustomApkRelease
         else
             write_color_output "gradle/gradlew not found" "Red"; return 1
         fi
