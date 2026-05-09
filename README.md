@@ -5,7 +5,7 @@
 ![Lint](https://img.shields.io/badge/lint-passing-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Supernote-blue)
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.1-blue)
 
 An on-device AI chat sidebar for Supernote notes, PDFs, and EPUBs. Tap the **Copilot** button on the sidebar, ask the model to summarise the page, explain a section, or answer a question — the page screenshot and any extracted text go to the LLM you configured, and the reply lands in a panel on the right edge of the screen.
 
