@@ -166,10 +166,14 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       const ctx = await getPageContext();
       // PII toggle is the privacy contract: when on, redact the
       // composed text and drop the screenshot entirely (the page
-      // image can carry PII the regex doesn't see).
+      // image can carry PII the regex doesn't see). KeyFile.mode is
+      // the second gate — text-only providers (or text-mode keys)
+      // never receive the image regardless of toggle state.
       const composed = composeUserText(trimmed, ctx);
       const userText = piiOn ? redactPii(composed) : composed;
-      const imageBase64 = piiOn ? undefined : ctx?.screenshotBase64;
+      const allowImage = keyFile === undefined || keyFile.mode === 'image';
+      const imageBase64 =
+        piiOn || !allowImage ? undefined : ctx?.screenshotBase64;
       const r = await client.send(
         {
           systemPrompt: SYSTEM_PROMPT,
@@ -216,7 +220,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       release();
       setBusy(false);
     }
-  }, [apiKey, client, model, piiOn]);
+  }, [apiKey, client, keyFile, model, piiOn]);
 
   const onQuickActionTap = useCallback(
     (action: QuickActionId) => {

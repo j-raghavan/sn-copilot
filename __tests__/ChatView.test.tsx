@@ -670,6 +670,86 @@ describe('ChatView — hung send timeout', () => {
   });
 });
 
+describe('ChatView — KeyFile.mode gate on image attachment', () => {
+  const seedContextWithImage = (): void => {
+    const {setPageContext} = require('../src/scope/pageContext');
+    setPageContext({
+      notePath: '/sd/x.note',
+      page: 1,
+      screenshotPath: '/sd/png',
+      screenshotBase64: 'IMGBYTES',
+      pageText: 'page body',
+    });
+  };
+  const resetCtx = (): void => {
+    const {__testing__} = require('../src/scope/pageContext');
+    __testing__.reset();
+  };
+
+  it('suppresses imageBase64 when keyFile.mode is "text" even with piiOn off', async () => {
+    seedContextWithImage();
+    const fetchSpy = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{message: {content: 'ok'}}],
+        usage: {prompt_tokens: 1, completion_tokens: 1},
+        model: 'deepseek-chat',
+      }),
+      text: async () => '',
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      const {tree} = render({
+        initialPiiRedaction: false,
+        keyFile: {
+          provider: 'deepseek',
+          key: 'sk-deep',
+          model: 'deepseek-chat',
+          mode: 'text',
+          sourcePath: '/sd/copilot-key-deepseek.txt',
+        },
+      });
+      act(() => {
+        findByTestID(tree, 'chat-action-summarize').props.onPress();
+      });
+      await flushFakeProvider();
+      expect(fetchSpy).toHaveBeenCalled();
+      const [, init] = fetchSpy.mock.calls[0];
+      const body = JSON.parse(init.body as string);
+      const serialized = JSON.stringify(body);
+      expect(serialized).not.toContain('IMGBYTES');
+    } finally {
+      globalThis.fetch = originalFetch;
+      resetCtx();
+    }
+  });
+
+  it('forwards imageBase64 when keyFile.mode is "image" and piiOn off', async () => {
+    seedContextWithImage();
+    const fp = require('../src/providers/fakeProvider').default;
+    const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
+      text: 'ok',
+      usage: {inputTokens: 1, outputTokens: 1},
+      latencyMs: 1,
+      modelId: 'fake-model-1',
+    });
+    try {
+      // No keyFile → behaves as image-allowed (matches fake fallback).
+      const {tree} = render({initialPiiRedaction: false});
+      act(() => {
+        findByTestID(tree, 'chat-action-summarize').props.onPress();
+      });
+      await flushFakeProvider();
+      const sentReq = sendSpy.mock.calls[0][0] as {imageBase64?: string};
+      expect(sentReq.imageBase64).toBe('IMGBYTES');
+    } finally {
+      sendSpy.mockRestore();
+      resetCtx();
+    }
+  });
+});
+
 describe('ChatView — PII redaction enforcement', () => {
   const seedContext = (): void => {
     const {setPageContext} = require('../src/scope/pageContext');
