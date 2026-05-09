@@ -32,6 +32,7 @@ import {
 } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import CopilotOverlay from '../native/CopilotOverlay';
+import {redactPii} from '../privacy/redact';
 import {tryAcquire, release} from '../reentrancy/inFlightGuard';
 import {getPageContext} from '../scope/pageContext';
 import type {KeyFile} from '../types';
@@ -156,11 +157,17 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       // Awaiting here absorbs any residual capture latency under the
       // existing "thinking" placeholder.
       const ctx = await getPageContext();
+      // PII toggle is the privacy contract: when on, redact the
+      // composed text and drop the screenshot entirely (the page
+      // image can carry PII the regex doesn't see).
+      const composed = composeUserText(trimmed, ctx);
+      const userText = piiOn ? redactPii(composed) : composed;
+      const imageBase64 = piiOn ? undefined : ctx?.screenshotBase64;
       const r = await client.send(
         {
           systemPrompt: SYSTEM_PROMPT,
-          userText: composeUserText(trimmed, ctx),
-          imageBase64: ctx?.screenshotBase64,
+          userText,
+          imageBase64,
           maxTokens: 256,
           signal: ctl.signal,
         },
@@ -201,7 +208,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       release();
       setBusy(false);
     }
-  }, [apiKey, client, model]);
+  }, [apiKey, client, model, piiOn]);
 
   const onQuickActionTap = useCallback(
     (action: QuickActionId) => {

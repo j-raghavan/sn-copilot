@@ -626,6 +626,87 @@ describe('ChatView — keyFile prop wires real provider client', () => {
   });
 });
 
+describe('ChatView — PII redaction enforcement', () => {
+  const seedContext = (): void => {
+    const {setPageContext} = require('../src/scope/pageContext');
+    setPageContext({
+      notePath: '/sd/x.note',
+      page: 1,
+      screenshotPath: '/sd/png',
+      screenshotBase64: 'IMGBYTES',
+      pageText: 'Reach me at jay@example.com or 5551234567.',
+    });
+  };
+
+  const resetContext = (): void => {
+    const {__testing__} = require('../src/scope/pageContext');
+    __testing__.reset();
+  };
+
+  it('redacts email + long digits and drops image when piiOn is true', async () => {
+    seedContext();
+    const fp = require('../src/providers/fakeProvider').default;
+    const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
+      text: 'ok',
+      usage: {inputTokens: 1, outputTokens: 1},
+      latencyMs: 1,
+      modelId: 'fake-model-1',
+    });
+    try {
+      const {tree} = render({initialPiiRedaction: true});
+      act(() => {
+        findByTestID(tree, 'chat-input').props.onChangeText(
+          'Forward to me@b.co at 9998887777',
+        );
+      });
+      act(() => {
+        findByTestID(tree, 'chat-send').props.onPress();
+      });
+      await flushFakeProvider();
+      const sentReq = sendSpy.mock.calls[0][0] as {
+        userText: string;
+        imageBase64?: string;
+      };
+      expect(sentReq.userText).toContain('[REDACTED-EMAIL]');
+      expect(sentReq.userText).toContain('[REDACTED-NUMBER]');
+      expect(sentReq.userText).not.toContain('jay@example.com');
+      expect(sentReq.userText).not.toContain('5551234567');
+      expect(sentReq.imageBase64).toBeUndefined();
+    } finally {
+      sendSpy.mockRestore();
+      resetContext();
+    }
+  });
+
+  it('forwards raw text + image when piiOn is false', async () => {
+    seedContext();
+    const fp = require('../src/providers/fakeProvider').default;
+    const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
+      text: 'ok',
+      usage: {inputTokens: 1, outputTokens: 1},
+      latencyMs: 1,
+      modelId: 'fake-model-1',
+    });
+    try {
+      const {tree} = render({initialPiiRedaction: false});
+      act(() => {
+        findByTestID(tree, 'chat-action-summarize').props.onPress();
+      });
+      await flushFakeProvider();
+      const sentReq = sendSpy.mock.calls[0][0] as {
+        userText: string;
+        imageBase64?: string;
+      };
+      expect(sentReq.userText).toContain('jay@example.com');
+      expect(sentReq.userText).toContain('5551234567');
+      expect(sentReq.imageBase64).toBe('IMGBYTES');
+    } finally {
+      sendSpy.mockRestore();
+      resetContext();
+    }
+  });
+});
+
 // Side-effect: ensure jest.requireActual references stay alive (no
 // dead-import lint). The test file uses the actual fakeProvider via
 // the real module path, with one test using jest.spyOn for the
