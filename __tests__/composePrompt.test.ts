@@ -24,6 +24,12 @@ describe('composeUserText', () => {
     );
   });
 
+  it('returns the user input verbatim when pageText is whitespace-only', () => {
+    expect(composeUserText('Summarize this', makeCtx('   \n  \t\n'))).toBe(
+      'Summarize this',
+    );
+  });
+
   it('appends a labelled section when pageText is present', () => {
     expect(
       composeUserText('Summarize this', makeCtx('first line\nsecond line')),

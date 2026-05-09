@@ -13,7 +13,10 @@ export const composeUserText = (
   trimmedUserInput: string,
   pageContext: PageContext | null,
 ): string => {
-  if (pageContext === null || pageContext.pageText.length === 0) {
+  // Trim before the empty check — whitespace-only pageText (blank
+  // pages, OCR yielding only newlines) would otherwise add a useless
+  // section header to every prompt.
+  if (pageContext === null || pageContext.pageText.trim().length === 0) {
     return trimmedUserInput;
   }
   return (
