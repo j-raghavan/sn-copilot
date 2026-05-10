@@ -32,6 +32,9 @@ Here the trade is reversed: you do the 30 seconds of setup once, and from then o
 
 https://github.com/user-attachments/assets/a176aae0-a33d-4885-a93f-0a7f63d1e861
 
+### v1.0.2
+
+https://github.com/user-attachments/assets/4b66eead-0561-4d46-afdd-21919ff1b5be
 
 
 ## Quick start
