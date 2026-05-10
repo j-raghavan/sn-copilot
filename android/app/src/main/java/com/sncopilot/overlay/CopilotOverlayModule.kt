@@ -432,6 +432,46 @@ class CopilotOverlayModule(reactContext: ReactApplicationContext) :
     UiThreadUtil.runOnUiThread { closeOnUiThread(promise) }
   }
 
+  /**
+   * Write `base64Content` (a standard base64 string) to `path` as raw
+   * bytes. Used by the encrypted-vault store: sn-plugin-lib's
+   * NativeFileUtils only exposes copy/rename/delete/list — there's no
+   * `writeFile`. Reading is handled by `fetch('file://…')` already.
+   *
+   * Intent-private write semantics:
+   *  - Caller passes the FINAL destination path. Atomicity (write-tmp,
+   *    rename) is the caller's responsibility via FileUtils.renameToFile;
+   *    this method is the one-shot "put bytes at path" primitive.
+   *  - Parent directory must already exist; FileUtils.makeDir is the
+   *    other primitive callers use to set that up.
+   */
+  @ReactMethod
+  fun writeFileBase64(path: String, base64Content: String, promise: Promise) {
+    Log.i(TAG, "[COPILOT_OVERLAY] writeFileBase64 path=$path bytes(b64)=${base64Content.length}")
+    try {
+      val bytes = android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT)
+      val target = java.io.File(path)
+      val parent = target.parentFile
+      if (parent != null && !parent.exists()) {
+        promise.resolve(buildResult(success = false, code = "PARENT_MISSING",
+            message = "Parent directory does not exist: ${parent.absolutePath}"))
+        return
+      }
+      java.io.FileOutputStream(target).use { it.write(bytes) }
+      Log.i(TAG, "[COPILOT_OVERLAY] writeFileBase64: SUCCESS bytes=${bytes.size}")
+      promise.resolve(buildResult(success = true, code = "OK",
+          message = "Wrote ${bytes.size} bytes to $path"))
+    } catch (e: IllegalArgumentException) {
+      val msg = "Invalid base64 input: ${e.message}"
+      Log.e(TAG, "[COPILOT_OVERLAY] writeFileBase64: $msg", e)
+      promise.resolve(buildResult(success = false, code = "BAD_BASE64", message = msg))
+    } catch (e: Throwable) {
+      val msg = "${e.javaClass.simpleName}: ${e.message}"
+      Log.e(TAG, "[COPILOT_OVERLAY] writeFileBase64: $msg", e)
+      promise.resolve(buildResult(success = false, code = "WRITE_FAILED", message = msg))
+    }
+  }
+
   private fun closeOnUiThread(promise: Promise) {
     val removed = removeOverlay()
     if (removed) {

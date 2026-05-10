@@ -46,3 +46,27 @@ export type ProviderResolution =
   | {kind: 'ok'; active: KeyFile; others: KeyFile[]}
   | {kind: 'none'; message: string}
   | {kind: 'ambiguous'; message: string; candidates: KeyFile[]};
+
+// User's choice for whether the key file lives plaintext on disk or
+// encrypted with a PIN. `undecided` is the bootstrap state — the
+// migration prompt sets it to one of the other two on first run.
+export type EncryptionMode = 'plaintext' | 'encrypted' | 'undecided';
+
+// Persisted alongside the encrypted vault (or alongside the plaintext
+// .txt files if the user opts out). Held in a small JSON file under the
+// plugin's private install dir, with fallback to MyStyle/SnCopilot.
+export type CopilotPrefs = {
+  version: 1;
+  encryptionMode: EncryptionMode;
+  // Minutes of inactivity before the in-memory derived key is wiped.
+  // Only meaningful when encryptionMode === 'encrypted'.
+  idleTimeoutMin: number;
+};
+
+export const DEFAULT_IDLE_TIMEOUT_MIN = 10;
+
+export const DEFAULT_PREFS: Readonly<CopilotPrefs> = Object.freeze({
+  version: 1 as const,
+  encryptionMode: 'undecided' as const,
+  idleTimeoutMin: DEFAULT_IDLE_TIMEOUT_MIN,
+});

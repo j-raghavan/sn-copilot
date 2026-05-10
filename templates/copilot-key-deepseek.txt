@@ -10,6 +10,9 @@
 # - As a small mitigation on this text-only path, emails and 7+ digit
 #   runs in the outbound text are scrubbed automatically.
 # - Lines starting with '#' are comments. Blank lines are ignored.
+# - First time you open Copilot Settings after dropping this file,
+#   you'll be offered a one-time choice to encrypt the key with a PIN
+#   (recommended) or keep the plaintext file. See README.md.
 
 provider=deepseek
 model=deepseek-chat

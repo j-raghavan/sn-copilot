@@ -8,11 +8,27 @@ const mockFetch = jest.fn();
 
 jest.mock('sn-plugin-lib', () => ({
   FileUtils: {
-    exists: jest.fn(async () => true),
+    // exists defaults to false so prefs/vault probes report "no file"
+    // unless a specific test case sets up content. Tests that need
+    // the .txt path to "exist" rely on listFiles returning entries
+    // — fetch is what ultimately reads them.
+    exists: jest.fn(async () => false),
     listFiles: (path: string) => mockListFiles(path),
+    deleteFile: jest.fn(async () => true),
+    renameToFile: jest.fn(async () => true),
   },
   PluginManager: {
     registerButtonListener: jest.fn(),
+    getPluginDirPath: jest.fn(async () => null),
+  },
+}));
+
+jest.mock('../src/native/CopilotOverlay', () => ({
+  __esModule: true,
+  default: {
+    close: jest.fn(async () => ({success: true, code: 'OK', message: ''})),
+    copyToClipboard: jest.fn(async () => ({success: true, code: 'OK', message: ''})),
+    writeFileBase64: jest.fn(async () => ({success: true, code: 'OK', message: ''})),
   },
 }));
 
@@ -46,6 +62,7 @@ const fileResp = (text: string) => ({
 import React from 'react';
 import {act, create, ReactTestRenderer} from 'react-test-renderer';
 import SettingsView from '../src/ui/SettingsView';
+import {__testing__ as sessionTesting} from '../src/storage/sessionKey';
 import {
   findAllText,
   findByTestID,
@@ -53,15 +70,63 @@ import {
   textOf,
 } from './helpers/textTraversal';
 
+// The secure-key-store wiring chains many microtask hops:
+// buildWiringBundle → setBundle → SettingsViewBody mount →
+// useCopilotState refresh → setState (twice — local + state-machine).
+// 15 setImmediate yields drain everything in the worst case.
 const flushPromises = async () => {
-  for (let i = 0; i < 5; i++) {
-    await Promise.resolve();
+  for (let i = 0; i < 15; i++) {
+    await new Promise((r) => setImmediate(r));
   }
 };
+
+// Pump act+flush until the body of SettingsView mounts (testID
+// `settings-resolution-ok` or `-none` or `-ambiguous` appears) — i.e.,
+// the wiring + async discovery have resolved. Used by the
+// non-no-key tests; the empty-checklist case renders synchronously.
+const waitForSettingsBody = async (
+  tree: ReactTestRenderer,
+  maxAttempts = 20,
+): Promise<void> => {
+  const seen = (id: string) => tree.root.findAllByProps({testID: id}).length > 0;
+  for (let i = 0; i < maxAttempts; i++) {
+    if (
+      seen('settings-resolution-ok') ||
+      seen('settings-resolution-none') ||
+      seen('settings-resolution-ambiguous')
+    ) {
+      return;
+    }
+    await act(async () => {
+      await flushPromises();
+    });
+  }
+};
+
+// Tracks SettingsView instances across tests so we can unmount them
+// in afterEach — without this, an instance from one test still has a
+// pending buildWiringBundle resolution chain that fires inside the
+// next test, consuming mockListFiles.mockResolvedValueOnce and
+// leaking state across cases.
+const liveTrees: ReactTestRenderer[] = [];
 
 beforeEach(() => {
   mockListFiles.mockReset();
   mockFetch.mockReset();
+  sessionTesting.reset();
+});
+
+afterEach(() => {
+  while (liveTrees.length > 0) {
+    const t = liveTrees.pop()!;
+    try {
+      act(() => {
+        t.unmount();
+      });
+    } catch {
+      // Tree may already be unmounted; safe to ignore.
+    }
+  }
 });
 
 function renderSettings(
@@ -72,8 +137,24 @@ function renderSettings(
   act(() => {
     tree = create(<SettingsView onClose={onClose} {...overrides} />);
   });
+  liveTrees.push(tree);
   return {tree, onClose};
 }
+
+// Mount + drain until SettingsView's body has rendered. Reserved for
+// future tests that want to assert on testIDs which only appear after
+// async discovery has resolved; keep the helper available even though
+// no current case uses it.
+export const renderSettingsAndWait = async (
+  overrides: Partial<React.ComponentProps<typeof SettingsView>> = {},
+) => {
+  const r = renderSettings(overrides);
+  await act(async () => {
+    await flushPromises();
+  });
+  await waitForSettingsBody(r.tree);
+  return r;
+};
 
 describe('SettingsView — discovery: no key files', () => {
   it('shows a 4-step setup checklist when MyStyle/SnCopilot is empty', async () => {
@@ -361,28 +442,29 @@ describe('SettingsView — Test Connection no-op when no resolution', () => {
 });
 
 describe('SettingsView — unmount safety', () => {
-  it('does not setState when unmounted before discovery resolves', async () => {
-    let resolveList!: (val: FileEntry[] | null) => void;
-    mockListFiles.mockImplementationOnce(
-      () =>
-        new Promise<FileEntry[] | null>(r => {
-          resolveList = r;
-        }),
+  it('does not setState when unmounted before bundle resolves', async () => {
+    // The bootstrap chain now starts with buildWiringBundle. Hold its
+    // first await — getPluginDirPath — open until after we unmount.
+    // The bundle effect's cleanup sets cancelled=true so setBundle
+    // never fires (no setState on an unmounted component).
+    const snLib = jest.requireMock('sn-plugin-lib') as {
+      PluginManager: {getPluginDirPath: jest.Mock};
+    };
+    let resolveDir!: (v: string | null) => void;
+    snLib.PluginManager.getPluginDirPath.mockImplementationOnce(
+      () => new Promise<string | null>((r) => (resolveDir = r)),
     );
     const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const {tree} = renderSettings();
-      // Unmount before listFiles resolves.
       act(() => {
         tree.unmount();
       });
-      // Now resolve — the post-await mountedRef guard should prevent
-      // any setState (otherwise React would warn via console.error).
       await act(async () => {
-        resolveList(null);
+        resolveDir(null);
         await flushPromises();
       });
-      const sawWarning = errSpy.mock.calls.some(c =>
+      const sawWarning = errSpy.mock.calls.some((c) =>
         String(c[0] ?? '').includes('unmounted component'),
       );
       expect(sawWarning).toBe(false);

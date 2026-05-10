@@ -12,6 +12,8 @@
     "coverage": "jest --coverage"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.2.0",
+    "@noble/hashes": "^2.2.0",
     "react": "19.0.0",
     "react-native": "0.79.2",
     "react-native-markdown-display": "^7.0.2",

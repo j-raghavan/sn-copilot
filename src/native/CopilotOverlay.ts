@@ -17,6 +17,9 @@ export type OverlayResultCode =
   | 'UPDATE_FAILED'
   | 'NO_CLIPBOARD_SERVICE'
   | 'CLIPBOARD_THREW'
+  | 'PARENT_MISSING'
+  | 'BAD_BASE64'
+  | 'WRITE_FAILED'
   | 'MODULE_MISSING';
 
 export type OverlayResult = {
@@ -39,6 +42,7 @@ type NativeShape = {
   close(): Promise<OverlayResult>;
   getScreenSize(): Promise<ScreenSize>;
   copyToClipboard(text: string, label: string | null): Promise<OverlayResult>;
+  writeFileBase64(path: string, base64Content: string): Promise<OverlayResult>;
 };
 
 const moduleMissingResult: OverlayResult = {
@@ -120,6 +124,17 @@ export async function copyToClipboard(
   return native.copyToClipboard(text, label);
 }
 
+export async function writeFileBase64(
+  path: string,
+  base64Content: string,
+): Promise<OverlayResult> {
+  const native = nativeOrNull();
+  if (!native) {
+    return moduleMissingResult;
+  }
+  return native.writeFileBase64(path, base64Content);
+}
+
 // Convenience for tests / future callers that prefer a single object.
 const CopilotOverlay = {
   open,
@@ -128,5 +143,6 @@ const CopilotOverlay = {
   close,
   getScreenSize,
   copyToClipboard,
+  writeFileBase64,
 };
 export default CopilotOverlay;

@@ -15,7 +15,7 @@ This plugin has **no backend**. It does not run a service, route your traffic th
 
 **What that means concretely:**
 
-- **You own the key.** It lives in a text file in `MyStyle/SnCopilot/` on your device — created by you, never uploaded by us, never copied off the device by the plugin.
+- **You own the key.** It lives in a text file in `MyStyle/SnCopilot/` on your device — created by you, never uploaded by us, never copied off the device by the plugin. You can [optionally encrypt it with a PIN](#optional-encrypt-your-key-with-a-pin) so other plugins on the same device can't read it.
 - **You own the conversation.** Requests go from your device to the provider you chose. We never see them. There is no "Copilot history" stored anywhere outside your provider's account.
 - **You own the audit.** Every billable request shows up on **your** OpenAI / Anthropic / Google / DeepSeek dashboard, with timestamps and token counts. You can revoke the key, rotate it, see exactly what it cost, and stop in one click.
 
@@ -98,6 +98,41 @@ The plugin sends two things to the configured provider on each chat send:
 There is no "PII redaction" toggle. On a vision-capable provider the page image carries everything that's visibly on the page, so scrubbing emails or numbers from the text payload while shipping the full screenshot would be theatre. On DeepSeek (text-only) the plugin silently scrubs emails and 7+ digit runs from the outbound text, since that's the one path where redaction actually reduces what we ship.
 
 Be deliberate about which page is open before tapping Copilot. If the page contains something you wouldn't paste into a third-party chat box, don't tap.
+
+### A note on shared filesystem access between plugins
+
+The Supernote plugin runtime gives every installed plugin the same filesystem access the host app has — there is no per-plugin sandbox. By default your `copilot-key-<provider>.txt` lives as plaintext under `MyStyle/SnCopilot/`, where any other plugin you install can read it. Whether that matters depends on what other plugins you trust on the device.
+
+Two mitigations, in increasing strength:
+
+1. **Provider-side spend cap (always do this).** On the Anthropic / OpenAI / Google / DeepSeek dashboard, set a low monthly budget on the API key Copilot uses. A stolen key is then annoying instead of expensive. Use a *dedicated* key for Copilot that has no other entitlements.
+2. **Encrypt the key with a PIN (opt-in).** See the section below.
+
+## Optional: encrypt your key with a PIN
+
+If you'd rather not leave the key sitting plaintext in shared storage, Copilot can encrypt it with a PIN you choose:
+
+1. Drop your `copilot-key-<provider>.txt` into `MyStyle/SnCopilot/` as usual.
+2. Open Copilot → tap the ⚙ Settings cog. The top of Settings will show a one-time **"Protect your API key"** prompt offering three buttons:
+   - **Encrypt with a PIN  (recommended)** — choose a 6–12 digit PIN (or a passphrase ≥ 12 chars). Copilot writes an encrypted vault to its private install folder, then asks if you want to delete the plaintext `.txt`. After that, every time you open Copilot you'll be asked to enter the PIN once.
+   - **Keep plaintext file** — today's behaviour. The key stays plaintext in shared storage.
+   - **Decide later** — defer; we'll ask again next time you open Settings.
+3. Once encrypted, the **Key encryption** section in Settings gives you:
+   - **Lock now** — wipes the in-memory key without exiting.
+   - **Change PIN** — re-encrypt with a new PIN.
+   - **Disable encryption** — write the key back to plaintext (asks twice; this is destructive to the encryption posture).
+   - **Reset key** — forgot the PIN? Delete the vault and start over with a fresh `.txt` drop.
+   - **Auto-lock after** — pick how long inactivity has to last before the key is wiped from memory (default 10 min).
+
+What this defends against, what it doesn't:
+
+- ✓ Another co-installed Supernote plugin reading your key file. They get ciphertext.
+- ✓ Casual access from anyone with USB / Supernote Cloud sync after the migration — the on-disk file is encrypted.
+- ✗ Someone with USB or ADB access to your *unlocked* device while Copilot is unlocked. They can pull the encrypted file and watch you type.
+- ✗ A weak PIN against an attacker who has exfiltrated the encrypted file and runs offline brute-force. PBKDF2 raises the per-attempt cost but won't save a 6-digit PIN against a determined adversary.
+- ✗ Anything bad happening to the key in transit to your provider — that's still the provider's call to make.
+
+In short: combine "encrypt with PIN" with "low spend cap on a dedicated key" for the strongest practical posture this plugin can give you.
 
 ## Building
 

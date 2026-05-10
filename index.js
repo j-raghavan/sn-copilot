@@ -18,6 +18,8 @@ import CopilotOverlay from './src/native/CopilotOverlay';
 import {debugLog, infoLog} from './src/diagnostics/log';
 import {captureCurrentPage} from './src/scope/captureScreenshot';
 import {setPageContextPromise} from './src/scope/pageContext';
+import {buildWiringBundle} from './src/storage/wiring';
+import {installSecureLifecycle} from './src/storage/lifecycleWiring';
 
 // showType: 0 ("No UI display needed"). showType:1 would open the
 // plugin view full-screen and trigger `sendFullScreenDisableArea`,
@@ -78,6 +80,22 @@ AppRegistry.registerComponent('SnCopilotPanel', () => CopilotPanel);
 
 PluginManager.init();
 installPluginRouter();
+
+// Secure-key-store lifecycle wiring: subscribes to PluginLifeListener
+// so onStop wipes the in-memory derived key, and to sessionKey events
+// so unlock/lock arms/cancels the idle timer. Fire-and-forget — the
+// async bundle build doesn't block the rest of bootstrap; if it
+// fails (e.g. host doesn't expose getPluginDirPath), the lifecycle
+// wiring just doesn't get installed and we fall back to today's
+// plaintext-only behaviour.
+buildWiringBundle()
+  .then(bundle => installSecureLifecycle({prefsDeps: bundle.prefsDeps}))
+  .catch(err => {
+    console.log(
+      '[COPILOT] secure-key-store lifecycle install failed:',
+      String(err),
+    );
+  });
 
 // Route the sidebar button click into the native overlay.
 // Subscribing here (rather than installing a second listener) keeps
