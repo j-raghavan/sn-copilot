@@ -5,9 +5,11 @@
 // Designed to be conservative: we'd rather over-redact a license-plate
 // number than ship a real bank account through.
 //
-// When the user toggles "PII redaction" off in the chat header, the
-// caller skips this step entirely. The toggle is the contract; this
-// module only enforces it on the text path.
+// Applied unconditionally on the DeepSeek (text-only) path. Vision
+// providers (Anthropic / OpenAI / Gemini) skip this step because the
+// page screenshot already carries any PII visible on the page —
+// scrubbing the text payload while shipping the image would be
+// theatre.
 
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 // Seven or more consecutive digits — catches phone numbers (10),

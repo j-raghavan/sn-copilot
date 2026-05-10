@@ -124,6 +124,8 @@ If you'd rather not leave the key sitting plaintext in shared storage, Copilot c
    - **Reset key** — forgot the PIN? Delete the vault and start over with a fresh `.txt` drop.
    - **Auto-lock after** — pick how long inactivity has to last before the key is wiped from memory (default 10 min).
 
+   **Forgot your PIN at the unlock screen?** Settings is hidden while the vault is locked (by design — there's nothing actionable in there until you're in). Type a wrong PIN 5 times in a row on the unlock screen and a **"Forgot PIN — reset Copilot key"** button appears. Tap it to delete the vault and return to the setup checklist; you'll then drop a fresh `copilot-key-<provider>.txt` to start over.
+
 What this defends against, what it doesn't:
 
 - ✓ Another co-installed Supernote plugin reading your key file. They get ciphertext.

@@ -477,9 +477,11 @@ function SettingsViewBody(props: {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Privacy</Text>
         <Text testID="settings-privacy-note" style={styles.privacyNote}>
-          The page screenshot and any transcribed text on it are sent
-          to the configured LLM provider. Avoid opening sensitive
-          pages while Copilot is active.
+          On vision providers (Anthropic / OpenAI / Gemini) the page
+          screenshot and any transcribed text are sent verbatim — no
+          on-device redaction. On DeepSeek (text-only) emails and
+          7+ digit runs are scrubbed from the outbound text. Either
+          way, avoid opening sensitive pages while Copilot is active.
         </Text>
       </View>
     </ScrollView>

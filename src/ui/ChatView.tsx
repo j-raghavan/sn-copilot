@@ -4,7 +4,8 @@
  *   ┌─ Header: "Copilot"                       [−][A][+]  [×] ─┐
  *   │  Context: <scope label>                          [📝][⚙] │
  *   │  [☰ Summary] [? Explain] [✦ Clarify] [⊡ Snapshot]        │
- *   │  🛡  PII redaction                                   [ON] │
+ *   │  🛡️  Avoid sharing sensitive info; the visible page is   │
+ *   │     sent to the LLM.                                     │
  *   │  ─────────────────────────────────────────────────────── │
  *   │  ┌─ chat scroll ───────────────────────────────────────┐ │
  *   │  │   user / assistant bubbles                          │ │
@@ -20,6 +21,11 @@
  * which flows through the same provider call as free-form input.
  * While a request is in flight the action + send buttons are
  * disabled by the re-entrancy guard in src/reentrancy.
+ *
+ * Privacy: there is no per-message redaction toggle. On vision
+ * providers (Anthropic / OpenAI / Gemini) the page screenshot is
+ * always sent verbatim. On DeepSeek (text-only) the outbound text
+ * has emails and 7+ digit runs scrubbed automatically.
  */
 import React, {useCallback, useRef, useState} from 'react';
 import {
@@ -302,8 +308,8 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   const handleLarger = useCallback(() => setFontSize(s => stepUp(s)), []);
 
   // Wipes the chat history so the user can start fresh on the same
-  // page without closing/reopening the overlay. Keeps font size and
-  // pii preferences (those are user prefs, not session state).
+  // page without closing/reopening the overlay. Keeps font size
+  // (a user pref, not session state).
   const onNewChat = useCallback(() => {
     setMessages([]);
     setInput('');

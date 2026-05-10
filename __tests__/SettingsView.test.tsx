@@ -338,9 +338,12 @@ describe('SettingsView — privacy note + close', () => {
     expect(maybeFindByTestID(tree, 'settings-pii-toggle')).toBeNull();
     expect(maybeFindByTestID(tree, 'settings-vision-toggle')).toBeNull();
     expect(findByTestID(tree, 'settings-privacy-note')).toBeDefined();
-    expect(textOf(tree, 'settings-privacy-note')).toContain(
-      'sent to the configured LLM provider',
-    );
+    const note = textOf(tree, 'settings-privacy-note');
+    // Both branches of the privacy posture must be visible: vision
+    // providers send everything verbatim; DeepSeek scrubs the text.
+    expect(note).toContain('vision providers');
+    expect(note).toContain('DeepSeek');
+    expect(note).toContain('avoid opening sensitive pages');
   });
 
   it('fires onClose when [X] is tapped', async () => {
