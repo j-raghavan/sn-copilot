@@ -8,6 +8,9 @@
 # - The page screenshot is sent to Claude on every chat send. Avoid
 #   opening sensitive pages while Copilot is active.
 # - Lines starting with '#' are comments. Blank lines are ignored.
+# - First time you open Copilot Settings after dropping this file,
+#   you'll be offered a one-time choice to encrypt the key with a PIN
+#   (recommended) or keep the plaintext file. See README.md.
 
 provider=anthropic
 model=claude-haiku-4-5

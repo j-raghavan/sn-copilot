@@ -1,19 +1,43 @@
 /**
- * Read-only settings view: key-file configuration + Test Connection.
+ * Settings view: key-file configuration + Test Connection +
+ * encryption controls.
  *
  * On mount it reads `MyStyle/SnCopilot/copilot-key-*.txt` via
  * `FileUtils`, parses them, and resolves the active provider. The
  * key is shown masked. Test Connection sends a real "Hello" to the
  * provider and reports OK or the error message.
+ *
+ * Secure-key-store additions:
+ *   - When plaintext files exist and encryptionMode='undecided',
+ *     a banner at the top offers the migration to encrypted-with-PIN.
+ *   - The Encryption section at the bottom shows current state and
+ *     lock/change-PIN/disable/reset actions when encrypted+unlocked,
+ *     or an "Enable encryption" CTA when in plaintext/undecided mode.
+ *   - When the user opts into encryption, this view drives the
+ *     PinSetup → write-vault → prompt-to-delete-txt flow inline.
  */
 
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
-import {FileUtils} from 'sn-plugin-lib';
-import {discoverKeyFiles, type FileUtilsLike} from '../storage/keyFiles';
 import {resolveActiveProvider} from '../storage/activeProvider';
 import {createProviderClient} from '../providers';
+import {buildWiringBundle, type WiringBundle} from '../storage/wiring';
+import {useCopilotState} from '../storage/useCopilotState';
+import {setEncryptionMode, setIdleTimeoutMin} from '../storage/prefs';
+import * as idleTimer from '../storage/idleTimer';
+import {
+  changePin,
+  disableEncryption,
+  encryptInitial,
+  lockNow,
+  resetVault,
+} from '../storage/secureFlows';
+import {getActiveKeys} from '../storage/sessionKey';
+import {encodeUtf8} from '../sdk/utf8';
 import type {KeyFile, ProviderId, ProviderResolution} from '../types';
+import EncryptionSettings from './EncryptionSettings';
+import MigrationPrompt from './MigrationPrompt';
+import PinSetup from './PinSetup';
 import SetupChecklist from './SetupChecklist';
 
 export type SettingsViewProps = {
@@ -33,6 +57,14 @@ type TestStatus =
   | {kind: 'ok'; latencyMs: number; modelId: string}
   | {kind: 'error'; message: string};
 
+// Sub-screens stacked on top of the main settings — the "encryption
+// flow" pseudo-modes. Selected by the user via the migration banner
+// or the encryption section actions.
+type SubFlow =
+  | {kind: 'idle'}
+  | {kind: 'pin-setup'; intent: 'create' | 'change'}
+  | {kind: 'post-encrypt-cleanup'; sourcePaths: string[]};
+
 const maskKey = (raw: string): string => {
   if (raw.length <= 7) {
     return raw.replace(/./g, '•');
@@ -51,16 +83,70 @@ export default function SettingsView(
 ): React.JSX.Element {
   const {onClose} = props;
 
-  const [resolution, setResolution] = useState<ProviderResolution | null>(null);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [testStatus, setTestStatus] = useState<TestStatus>({kind: 'idle'});
+  const [bundle, setBundle] = useState<WiringBundle | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const b = await buildWiringBundle();
+      if (cancelled) {
+        return;
+      }
+      setBundle(b);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  // mountedRef guards every setState that follows an await — without
-  // it, an unmount during slow IO (key-file scan, Test Connection)
-  // produces React's "state update on unmounted component" warning.
-  // testCtlRef holds the in-flight Test Connection AbortController so
-  // unmount can cancel the network call instead of just discarding
-  // its eventual result.
+  if (bundle === null) {
+    return (
+      <ScrollView testID="settings-view" style={styles.root}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Copilot — Settings</Text>
+          <TouchableOpacity
+            testID="settings-close"
+            accessibilityLabel="Close Copilot settings"
+            onPress={onClose}
+            style={styles.closeBtn}>
+            <Text style={styles.closeBtnText}>×</Text>
+          </TouchableOpacity>
+        </View>
+        <Text testID="settings-bootstrap-loading" style={styles.metaLine}>
+          Loading…
+        </Text>
+      </ScrollView>
+    );
+  }
+
+  return <SettingsViewBody onClose={onClose} bundle={bundle} />;
+}
+
+function SettingsViewBody(props: {
+  onClose: () => void;
+  bundle: WiringBundle;
+}): React.JSX.Element {
+  const {onClose, bundle} = props;
+  // useCopilotState's effects depend on the deps object's identity —
+  // memoize so they only re-run when the bundle itself changes.
+  const stateDeps = useMemo(
+    () => ({
+      prefsDeps: bundle.prefsDeps,
+      vaultDeps: bundle.vaultDeps,
+      discoveryDeps: bundle.discoveryDeps,
+      logger: consoleLogger,
+    }),
+    [bundle],
+  );
+  const {state, prefs, discoveryErrors, refresh: refreshState} =
+    useCopilotState(stateDeps);
+  const errors = useMemo(
+    () => discoveryErrors.map((e) => `${e.path}: ${e.reason}`),
+    [discoveryErrors],
+  );
+
+  const [testStatus, setTestStatus] = useState<TestStatus>({kind: 'idle'});
+  const [subFlow, setSubFlow] = useState<SubFlow>({kind: 'idle'});
+
   const mountedRef = useRef(true);
   const testCtlRef = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -72,37 +158,29 @@ export default function SettingsView(
     };
   }, []);
 
-  // discoverKeyFiles already self-catches IO errors (per-entry +
-  // listFiles); resolveActiveProvider is pure. So no outer catch is
-  // needed here — any throw would be a genuine bug and should bubble.
-  const refresh = useCallback(async () => {
-    setResolution(null);
-    setErrors([]);
-    const result = await discoverKeyFiles({
-      // SDK declares listFiles as Promise<string[]> but native returns
-      // FileEntry[] — see keyFiles.ts FileUtilsLike note.
-      fileUtils: FileUtils as unknown as FileUtilsLike,
-      logger: consoleLogger,
-    });
-    if (!mountedRef.current) {
-      return;
+  // Derive the user-visible "resolution" + "errors" from the state
+  // machine instead of running discovery a second time. This keeps
+  // useCopilotState as the single source of truth for what's on disk
+  // vs in the vault, and avoids racing two FileUtils.listFiles calls
+  // against each other.
+  const resolution = useMemo<ProviderResolution | null>(() => {
+    if (state === null) {
+      return null;
     }
-    const active = resolveActiveProvider(result.files);
-    setResolution(active);
-    setErrors(result.errors.map(e => `${e.path}: ${e.reason}`));
-    console.log(
-      '[COPILOT_SETTINGS] discovery',
-      JSON.stringify({
-        activeKind: active.kind,
-        fileCount: result.files.length,
-        errorCount: result.errors.length,
-      }),
-    );
-  }, []);
+    const filesForResolution =
+      state.kind === 'unlocked'
+        ? state.files
+        : state.kind === 'plaintext' || state.kind === 'migrate'
+        ? state.files
+        : state.kind === 'merge'
+        ? state.plaintextFiles
+        : [];
+    return resolveActiveProvider(filesForResolution);
+  }, [state]);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const refresh = useCallback(async () => {
+    await refreshState();
+  }, [refreshState]);
 
   const onTestConnection = useCallback(async () => {
     if (!resolution || resolution.kind !== 'ok') {
@@ -134,10 +212,6 @@ export default function SettingsView(
         latencyMs: r.latencyMs,
         modelId: r.modelId,
       });
-      console.log(
-        `[COPILOT_SETTINGS] test connection ok latencyMs=${r.latencyMs} ` +
-          `replyLength=${r.text.length}`,
-      );
     } catch (e) {
       if (!mountedRef.current) {
         return;
@@ -155,6 +229,148 @@ export default function SettingsView(
     }
   }, [resolution]);
 
+  // ----- Encryption flows -----
+
+  const onEncryptStart = useCallback(() => {
+    setSubFlow({kind: 'pin-setup', intent: 'create'});
+  }, []);
+
+  const filesToEncrypt = useMemo<KeyFile[]>(
+    () =>
+      state !== null && (state.kind === 'plaintext' || state.kind === 'migrate')
+        ? state.files
+        : [],
+    [state],
+  );
+
+  const onPinSubmitForCreate = useCallback(
+    async (secret: string) => {
+      const r = await encryptInitial(
+        {vault: bundle.vaultDeps, prefs: bundle.prefsDeps},
+        secret,
+        filesToEncrypt,
+      );
+      if (!r.ok) {
+        return;
+      }
+      setSubFlow({
+        kind: 'post-encrypt-cleanup',
+        sourcePaths: filesToEncrypt.map((f) => f.sourcePath),
+      });
+      await refresh();
+    },
+    [bundle.prefsDeps, bundle.vaultDeps, filesToEncrypt, refresh],
+  );
+
+  const onPinSubmitForChange = useCallback(
+    async (secret: string) => {
+      const unlocked = getActiveKeys() ?? [];
+      await changePin(
+        {vault: bundle.vaultDeps, prefs: bundle.prefsDeps},
+        secret,
+        unlocked,
+      );
+      setSubFlow({kind: 'idle'});
+    },
+    [bundle.prefsDeps, bundle.vaultDeps],
+  );
+
+  const onCleanupConfirmDelete = useCallback(async () => {
+    const paths =
+      subFlow.kind === 'post-encrypt-cleanup' ? subFlow.sourcePaths : [];
+    for (const path of paths) {
+      await bundle.io.remove(path);
+    }
+    setSubFlow({kind: 'idle'});
+    await refresh();
+  }, [bundle.io, refresh, subFlow]);
+
+  const onCleanupSkipDelete = useCallback(async () => {
+    setSubFlow({kind: 'idle'});
+    await refresh();
+  }, [refresh]);
+
+  const onKeepPlaintext = useCallback(async () => {
+    await setEncryptionMode(bundle.prefsDeps, 'plaintext');
+    await refresh();
+  }, [bundle.prefsDeps, refresh]);
+
+  const onLockNow = useCallback(() => {
+    lockNow();
+    onClose();
+  }, [onClose]);
+
+  const onChangePinStart = useCallback(() => {
+    setSubFlow({kind: 'pin-setup', intent: 'change'});
+  }, []);
+
+  const onDisable = useCallback(async () => {
+    const unlocked = getActiveKeys() ?? [];
+    // Write-back: re-create one .txt per provider in MyStyle/SnCopilot/.
+    const writeBack = async (files: KeyFile[]): Promise<void> => {
+      for (const f of files) {
+        const lines = [
+          `provider=${f.provider}`,
+          `model=${f.model}`,
+          `key=${f.key}`,
+        ];
+        if (f.defaultProvider !== undefined) {
+          lines.push(`default_provider=${f.defaultProvider}`);
+        }
+        if (f.clarifyRedact !== undefined) {
+          lines.push(`clarify_redact=${f.clarifyRedact ? 'on' : 'off'}`);
+        }
+        const path = `/storage/emulated/0/MyStyle/SnCopilot/copilot-key-${f.provider}.txt`;
+        await bundle.io.writeBytes(path, encodeUtf8(lines.join('\n') + '\n'));
+      }
+    };
+    await disableEncryption(
+      {vault: bundle.vaultDeps, prefs: bundle.prefsDeps},
+      writeBack,
+      unlocked,
+    );
+    await refresh();
+  }, [bundle.io, bundle.prefsDeps, bundle.vaultDeps, refresh]);
+
+  const onResetVault = useCallback(async () => {
+    await resetVault({vault: bundle.vaultDeps, prefs: bundle.prefsDeps});
+    await refresh();
+  }, [bundle.prefsDeps, bundle.vaultDeps, refresh]);
+
+  const onIdleTimeoutChange = useCallback(
+    async (minutes: number) => {
+      await setIdleTimeoutMin(bundle.prefsDeps, minutes);
+      // Reflect the new timeout immediately if a timer is running.
+      idleTimer.configure({minutes});
+      await refresh();
+    },
+    [bundle.prefsDeps, refresh],
+  );
+
+  // Sub-flow renders take over the entire view.
+  if (subFlow.kind === 'pin-setup') {
+    return (
+      <PinSetup
+        intent={subFlow.intent}
+        onSubmit={
+          subFlow.intent === 'create' ? onPinSubmitForCreate : onPinSubmitForChange
+        }
+        onCancel={() => setSubFlow({kind: 'idle'})}
+      />
+    );
+  }
+  if (subFlow.kind === 'post-encrypt-cleanup') {
+    return (
+      <CleanupPrompt
+        sourcePaths={subFlow.sourcePaths}
+        onDelete={onCleanupConfirmDelete}
+        onSkip={onCleanupSkipDelete}
+      />
+    );
+  }
+
+  const showMigrationBanner = state?.kind === 'migrate';
+
   return (
     <ScrollView testID="settings-view" style={styles.root}>
       <View style={styles.header}>
@@ -167,6 +383,15 @@ export default function SettingsView(
           <Text style={styles.closeBtnText}>×</Text>
         </TouchableOpacity>
       </View>
+
+      {showMigrationBanner && state?.kind === 'migrate' ? (
+        <MigrationPrompt
+          detectedFiles={state.files.map((f) => f.sourcePath)}
+          onEncrypt={onEncryptStart}
+          onKeepPlaintext={onKeepPlaintext}
+          onDecideLater={onClose}
+        />
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Provider configuration</Text>
@@ -235,14 +460,71 @@ export default function SettingsView(
         ) : null}
       </View>
 
+      {state !== null ? (
+        <EncryptionSettings
+          encryptionMode={prefs.encryptionMode}
+          unlocked={state.kind === 'unlocked'}
+          idleTimeoutMin={prefs.idleTimeoutMin}
+          onEnableEncryption={onEncryptStart}
+          onLockNow={onLockNow}
+          onChangePin={onChangePinStart}
+          onDisableEncryption={onDisable}
+          onResetVault={onResetVault}
+          onIdleTimeoutChange={onIdleTimeoutChange}
+        />
+      ) : null}
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Privacy</Text>
         <Text testID="settings-privacy-note" style={styles.privacyNote}>
-          The page screenshot and any transcribed text on it are sent
-          to the configured LLM provider. Avoid opening sensitive
-          pages while Copilot is active.
+          On vision providers (Anthropic / OpenAI / Gemini) the page
+          screenshot and any transcribed text are sent verbatim — no
+          on-device redaction. On DeepSeek (text-only) emails and
+          7+ digit runs are scrubbed from the outbound text. Either
+          way, avoid opening sensitive pages while Copilot is active.
         </Text>
       </View>
+    </ScrollView>
+  );
+}
+
+function CleanupPrompt(props: {
+  sourcePaths: string[];
+  onDelete: () => void;
+  onSkip: () => void;
+}): React.JSX.Element {
+  const {sourcePaths, onDelete, onSkip} = props;
+  return (
+    <ScrollView testID="cleanup-prompt" style={styles.root}>
+      <Text style={styles.title}>Migration complete</Text>
+      <Text style={styles.body}>
+        Your key is now encrypted in the plugin's private folder. The original
+        plaintext file(s) can be deleted now — any other plugin can still read
+        them until you do.
+      </Text>
+      <View style={styles.fileList}>
+        {sourcePaths.map((p) => (
+          <Text key={p} style={styles.fileLine}>
+            • {p}
+          </Text>
+        ))}
+      </View>
+      <TouchableOpacity
+        testID="cleanup-delete"
+        accessibilityLabel="Delete plaintext key file"
+        onPress={onDelete}
+        style={[styles.refreshBtn, styles.dangerBtn]}>
+        <Text style={[styles.refreshBtnText, styles.dangerBtnText]}>
+          Delete plaintext file(s) now
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        testID="cleanup-skip"
+        accessibilityLabel="Keep plaintext file for now"
+        onPress={onSkip}
+        style={styles.refreshBtn}>
+        <Text style={styles.refreshBtnText}>Skip — I'll delete it manually</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -264,7 +546,7 @@ function KeyFileBlock({
     return (
       <View testID="settings-resolution-ambiguous" style={styles.noKeyBlock}>
         <Text style={styles.noKeyText}>{resolution.message}</Text>
-        {resolution.candidates.map(c => (
+        {resolution.candidates.map((c) => (
           <Text key={c.sourcePath} style={styles.mono}>
             {c.sourcePath}
           </Text>
@@ -328,6 +610,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#000000',
   },
+  body: {fontSize: 14, color: '#000000', marginBottom: 12, lineHeight: 20},
   closeBtn: {
     paddingHorizontal: 12,
     paddingVertical: 4,
@@ -358,12 +641,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#000000',
     marginBottom: 8,
-  },
-  noKeyHint: {
-    fontSize: 13,
-    color: '#000000',
-    marginTop: 8,
-    marginBottom: 4,
   },
   mono: {
     fontFamily: 'monospace',
@@ -405,6 +682,15 @@ const styles = StyleSheet.create({
   refreshBtnText: {
     fontSize: 13,
     color: '#000000',
+  },
+  dangerBtn: {backgroundColor: '#000000'},
+  dangerBtnText: {color: '#FFFFFF', fontWeight: '600'},
+  fileList: {paddingLeft: 4, paddingVertical: 4, marginBottom: 8},
+  fileLine: {
+    fontSize: 12,
+    fontFamily: 'monospace',
+    color: '#000000',
+    paddingVertical: 2,
   },
   errorBlock: {
     marginTop: 12,

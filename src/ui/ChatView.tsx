@@ -4,7 +4,8 @@
  *   ┌─ Header: "Copilot"                       [−][A][+]  [×] ─┐
  *   │  Context: <scope label>                          [📝][⚙] │
  *   │  [☰ Summary] [? Explain] [✦ Clarify] [⊡ Snapshot]        │
- *   │  🛡  PII redaction                                   [ON] │
+ *   │  🛡️  Avoid sharing sensitive info; the visible page is   │
+ *   │     sent to the LLM.                                     │
  *   │  ─────────────────────────────────────────────────────── │
  *   │  ┌─ chat scroll ───────────────────────────────────────┐ │
  *   │  │   user / assistant bubbles                          │ │
@@ -20,6 +21,11 @@
  * which flows through the same provider call as free-form input.
  * While a request is in flight the action + send buttons are
  * disabled by the re-entrancy guard in src/reentrancy.
+ *
+ * Privacy: there is no per-message redaction toggle. On vision
+ * providers (Anthropic / OpenAI / Gemini) the page screenshot is
+ * always sent verbatim. On DeepSeek (text-only) the outbound text
+ * has emails and 7+ digit runs scrubbed automatically.
  */
 import React, {useCallback, useRef, useState} from 'react';
 import {
@@ -302,8 +308,8 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   const handleLarger = useCallback(() => setFontSize(s => stepUp(s)), []);
 
   // Wipes the chat history so the user can start fresh on the same
-  // page without closing/reopening the overlay. Keeps font size and
-  // pii preferences (those are user prefs, not session state).
+  // page without closing/reopening the overlay. Keeps font size
+  // (a user pref, not session state).
   const onNewChat = useCallback(() => {
     setMessages([]);
     setInput('');
@@ -418,13 +424,13 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         })}
       </View>
 
-      {/* Privacy caution. The page screenshot + transcribed text
-          go to the configured LLM provider verbatim — there's no
-          on-device redaction. Be deliberate about what's on the
-          page before tapping a quick action. */}
+      {/* Privacy caution — matches README: vision providers send the
+          screenshot as-is; DeepSeek is text-only so outbound text is
+          scrubbed (emails, 7+ digit runs). No per-message toggle. */}
       <Text testID="chat-privacy-note" style={styles.privacyNote}>
-        {'🛡️'} Avoid sharing sensitive info; the visible page is
-        sent to the LLM.
+        {'🛡️'} Avoid sharing sensitive info; the visible page is sent to
+        your provider. Vision models receive the image; DeepSeek scrubs
+        emails and long digits from text only.
       </Text>
 
       <View style={styles.divider} />

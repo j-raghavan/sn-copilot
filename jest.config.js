@@ -4,6 +4,13 @@ module.exports = {
     '/node_modules/',
     '/__tests__/helpers/',
   ],
+  // The RN jest preset only transforms react-native/@react-native
+  // node_modules. @noble/* ships ESM-only with no CJS fallback, so it
+  // needs babel transformation under jest. Keep the rest of the
+  // preset's ignore intact.
+  transformIgnorePatterns: [
+    'node_modules/(?!((jest-)?react-native|@react-native(-community)?|@noble)/)',
+  ],
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
     'index.js',
