@@ -16,10 +16,9 @@
 import {DEFAULT_PREFS, type CopilotPrefs, type EncryptionMode} from '../types';
 import type {FileIo} from './fileIo';
 import type {Logger} from '../sdk/types';
+import {decodeUtf8, encodeUtf8} from '../sdk/utf8';
 
 const TAG = '[prefs]';
-const utf8Decoder = new TextDecoder();
-const utf8Encoder = new TextEncoder();
 
 const VALID_MODES: ReadonlySet<EncryptionMode> = new Set([
   'plaintext',
@@ -70,7 +69,7 @@ export const readPrefs = async (deps: PrefsDeps): Promise<CopilotPrefs> => {
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(utf8Decoder.decode(bytes));
+    parsed = JSON.parse(decodeUtf8(bytes));
   } catch (e) {
     logger.warn(`${TAG} JSON parse failed (${(e as Error).message}) — using defaults`);
     return {...DEFAULT_PREFS};
@@ -88,7 +87,7 @@ export const writePrefs = async (
 ): Promise<void> => {
   const sanitized = sanitize(prefs);
   const json = JSON.stringify(sanitized);
-  await deps.io.writeBytes(deps.prefsPath, utf8Encoder.encode(json));
+  await deps.io.writeBytes(deps.prefsPath, encodeUtf8(json));
 };
 
 export const setEncryptionMode = async (

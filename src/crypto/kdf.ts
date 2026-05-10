@@ -15,6 +15,7 @@
 
 import {pbkdf2} from '@noble/hashes/pbkdf2.js';
 import {sha256} from '@noble/hashes/sha2.js';
+import {encodeUtf8} from '../sdk/utf8';
 
 export const DEFAULT_PBKDF2_ITERATIONS = 200_000;
 export const KEY_LENGTH_BYTES = 32; // AES-256
@@ -27,8 +28,6 @@ export type KdfParams = {
 export const DEFAULT_KDF_PARAMS: Readonly<KdfParams> = Object.freeze({
   iterations: DEFAULT_PBKDF2_ITERATIONS,
 });
-
-const utf8 = new TextEncoder();
 
 export const deriveKey = (
   passphrase: string,
@@ -48,7 +47,7 @@ export const deriveKey = (
       `deriveKey: iterations must be a positive integer, got ${params.iterations}`,
     );
   }
-  return pbkdf2(sha256, utf8.encode(passphrase), salt, {
+  return pbkdf2(sha256, encodeUtf8(passphrase), salt, {
     c: params.iterations,
     dkLen: KEY_LENGTH_BYTES,
   });

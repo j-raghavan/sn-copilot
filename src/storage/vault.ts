@@ -36,10 +36,9 @@ import type {KeyFile, ProviderId} from '../types';
 import {PROVIDER_IDS} from '../types';
 import type {FileIo} from './fileIo';
 import type {Logger} from '../sdk/types';
+import {decodeUtf8, encodeUtf8} from '../sdk/utf8';
 
 const TAG = '[vault]';
-const utf8Decoder = new TextDecoder();
-const utf8Encoder = new TextEncoder();
 const VAULT_VERSION = 1;
 const SUPPORTED_KDF = 'pbkdf2-sha256';
 const TMP_SUFFIX = '.tmp';
@@ -169,7 +168,7 @@ export const readVault = async (
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(utf8Decoder.decode(bytes));
+    parsed = JSON.parse(decodeUtf8(bytes));
   } catch (e) {
     return {kind: 'corrupt', reason: `JSON: ${(e as Error).message}`};
   }
@@ -201,7 +200,7 @@ export const readVault = async (
   }
   let plain: unknown;
   try {
-    plain = JSON.parse(utf8Decoder.decode(dec.plaintext));
+    plain = JSON.parse(decodeUtf8(dec.plaintext));
   } catch (e) {
     return {kind: 'corrupt', reason: `inner JSON: ${(e as Error).message}`};
   }
@@ -221,7 +220,7 @@ export const writeVault = async (
   const logger = deps.logger ?? noopLogger;
   const salt = randomBytes(SALT_LENGTH_BYTES);
   const key = deriveKey(passphrase, salt, DEFAULT_KDF_PARAMS);
-  const inner = utf8Encoder.encode(JSON.stringify({files}));
+  const inner = encodeUtf8(JSON.stringify({files}));
   const payload = encrypt(key, inner);
   const envelope: SerializedVault = {
     version: VAULT_VERSION,
@@ -233,7 +232,7 @@ export const writeVault = async (
     ctB64: bytesToBase64(payload),
   };
   const tmpPath = `${deps.vaultPath}${TMP_SUFFIX}`;
-  await deps.io.writeBytes(tmpPath, utf8Encoder.encode(JSON.stringify(envelope)));
+  await deps.io.writeBytes(tmpPath, encodeUtf8(JSON.stringify(envelope)));
 
   // Verify: read tmp + decrypt and compare. Catches a host-side
   // "writeFileBase64 said success but didn't" or any base64

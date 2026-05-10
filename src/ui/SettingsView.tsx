@@ -33,6 +33,7 @@ import {
   resetVault,
 } from '../storage/secureFlows';
 import {getActiveKeys} from '../storage/sessionKey';
+import {encodeUtf8} from '../sdk/utf8';
 import type {KeyFile, ProviderId, ProviderResolution} from '../types';
 import EncryptionSettings from './EncryptionSettings';
 import MigrationPrompt from './MigrationPrompt';
@@ -320,10 +321,7 @@ function SettingsViewBody(props: {
           lines.push(`clarify_redact=${f.clarifyRedact ? 'on' : 'off'}`);
         }
         const path = `/storage/emulated/0/MyStyle/SnCopilot/copilot-key-${f.provider}.txt`;
-        await bundle.io.writeBytes(
-          path,
-          new TextEncoder().encode(lines.join('\n') + '\n'),
-        );
+        await bundle.io.writeBytes(path, encodeUtf8(lines.join('\n') + '\n'));
       }
     };
     await disableEncryption(
