@@ -54,15 +54,15 @@ const bytesToBase64 = (bytes: Uint8Array): string => {
 };
 
 // Helper: build a vault envelope by hand for corruption tests.
-const buildEnvelope = (over: Partial<{
+const buildEnvelope = async (over: Partial<{
   version: number;
   algo: string;
   iterations: number;
   saltB64: string;
   ctB64: string;
-}> = {}): string => {
+}> = {}): Promise<string> => {
   const salt = randomBytes(SALT_LENGTH_BYTES);
-  const key = deriveKey('hunter2', salt, DEFAULT_KDF_PARAMS);
+  const key = await deriveKey('hunter2', salt, DEFAULT_KDF_PARAMS);
   const ct = encrypt(key, utf8.encode(JSON.stringify({files: sampleFiles})));
   return JSON.stringify({
     version: over.version ?? 1,
@@ -126,7 +126,7 @@ describe('vault — wrong PIN / not found', () => {
 });
 
 describe('vault — corrupt envelope', () => {
-  const corruptCases: Array<[string, () => string]> = [
+  const corruptCases: Array<[string, () => Promise<string> | string]> = [
     ['malformed JSON', () => '{ not json'],
     ['empty inside braces', () => '{}'],
     [
@@ -152,8 +152,9 @@ describe('vault — corrupt envelope', () => {
   ];
 
   it.each(corruptCases)('flags %s as corrupt', async (_label, build) => {
+    const text = await build();
     const io = createInMemoryFileIo({
-      [VAULT_PATH]: utf8.encode(build()),
+      [VAULT_PATH]: utf8.encode(text),
     });
     const r = await readVault({io, vaultPath: VAULT_PATH}, 'hunter2');
     expect(r.kind).toBe('corrupt');
@@ -168,7 +169,7 @@ describe('vault — corrupt envelope', () => {
   it('flags inner ciphertext that decrypts to non-JSON as corrupt', async () => {
     const io = createInMemoryFileIo();
     const salt = randomBytes(SALT_LENGTH_BYTES);
-    const key = deriveKey('hunter2', salt, DEFAULT_KDF_PARAMS);
+    const key = await deriveKey('hunter2', salt, DEFAULT_KDF_PARAMS);
     const ct = encrypt(key, utf8.encode('not json at all'));
     io.fs.set(
       VAULT_PATH,
@@ -187,7 +188,7 @@ describe('vault — corrupt envelope', () => {
   it('flags inner JSON without files: KeyFile[] as corrupt', async () => {
     const io = createInMemoryFileIo();
     const salt = randomBytes(SALT_LENGTH_BYTES);
-    const key = deriveKey('hunter2', salt, DEFAULT_KDF_PARAMS);
+    const key = await deriveKey('hunter2', salt, DEFAULT_KDF_PARAMS);
     const ct = encrypt(key, utf8.encode(JSON.stringify({files: [{wrong: 'shape'}]})));
     io.fs.set(
       VAULT_PATH,
@@ -241,6 +242,35 @@ describe('vault — atomic write semantics', () => {
     await expect(
       writeVault({io, vaultPath: VAULT_PATH}, 'hunter2', sampleFiles),
     ).rejects.toThrow(/rename failed/);
+    expect(io.fs.has(VAULT_PATH)).toBe(false);
+    expect(io.fs.has(`${VAULT_PATH}.tmp`)).toBe(false);
+  });
+
+  it('removes tmp and throws when the verify read throws', async () => {
+    const io = createInMemoryFileIo();
+    let writeCount = 0;
+    const realWrite = io.writeBytes.bind(io);
+    io.writeBytes = async (path, bytes) => {
+      writeCount += 1;
+      await realWrite(path, bytes);
+    };
+    io.readBytes = async () => {
+      throw new Error('disk read failed');
+    };
+    await expect(
+      writeVault({io, vaultPath: VAULT_PATH}, 'hunter2', sampleFiles),
+    ).rejects.toThrow(/verify read failed/);
+    expect(writeCount).toBe(1);
+    expect(io.fs.has(VAULT_PATH)).toBe(false);
+    expect(io.fs.has(`${VAULT_PATH}.tmp`)).toBe(false);
+  });
+
+  it('removes tmp and throws when the verify read returns null', async () => {
+    const io = createInMemoryFileIo();
+    io.readBytes = async () => null;
+    await expect(
+      writeVault({io, vaultPath: VAULT_PATH}, 'hunter2', sampleFiles),
+    ).rejects.toThrow(/verify read returned null/);
     expect(io.fs.has(VAULT_PATH)).toBe(false);
     expect(io.fs.has(`${VAULT_PATH}.tmp`)).toBe(false);
   });

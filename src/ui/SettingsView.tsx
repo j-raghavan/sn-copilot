@@ -497,9 +497,8 @@ function CleanupPrompt(props: {
       <Text style={styles.title}>Migration complete</Text>
       <Text style={styles.body}>
         Your key is now encrypted in the plugin's private folder. The original
-        plaintext file{sourcePaths.length === 1 ? '' : 's'} can be deleted now —
-        any other plugin can still read {sourcePaths.length === 1 ? 'it' : 'them'}{' '}
-        until you do.
+        plaintext file(s) can be deleted now — any other plugin can still read
+        them until you do.
       </Text>
       <View style={styles.fileList}>
         {sourcePaths.map((p) => (
@@ -514,7 +513,7 @@ function CleanupPrompt(props: {
         onPress={onDelete}
         style={[styles.refreshBtn, styles.dangerBtn]}>
         <Text style={[styles.refreshBtnText, styles.dangerBtnText]}>
-          Delete plaintext file{sourcePaths.length === 1 ? '' : 's'} now
+          Delete plaintext file(s) now
         </Text>
       </TouchableOpacity>
       <TouchableOpacity
