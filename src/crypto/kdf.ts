@@ -1,44 +1,33 @@
 // PBKDF2-SHA256 key derivation for the encrypted vault.
 //
-// Two execution paths:
+// Single execution path: CopilotOverlay.cryptoPbkdf2Sha256 → JDK
+// `SecretKeyFactory("PBKDF2WithHmacSHA256")`. Sub-100ms even at 200k
+// iterations on Supernote A6X because the JDK delegates to the
+// device's native crypto provider.
 //
-//   1. **Native (preferred)**: CopilotOverlay.cryptoPbkdf2Sha256 →
-//      JDK SecretKeyFactory("PBKDF2WithHmacSHA256"). Sub-100ms even
-//      at 200k iterations on Supernote A6X. This is the production
-//      path.
+// We deliberately do NOT carry a pure-JS fallback. The earlier
+// attempt (May 2026, commit eb5fa7e) had one — at the same iter
+// count as the native path — which would have re-introduced a
+// 4-minute UI freeze if the native bridge ever failed. Worse:
+// silent. By throwing here we surface registration / packaging
+// regressions immediately instead of papering over them with a
+// trap. PBKDF2WithHmacSHA256 is mandatory in Android since API 26
+// so the native call should never fail in production; if it does,
+// fix the registration.
 //
-//   2. **Pure-JS fallback**: @noble/hashes pbkdf2. Used when the
-//      native module isn't registered (Jest tests, or if the host
-//      ever stops bundling our overlay package). Brutally slow on
-//      Hermes — measured ~400 iters/sec — so the pure-JS path uses
-//      a dedicated, much lower iteration count to stay under ~10s.
-//
-// History: an earlier version used pure-JS at 200k iters and hung
-// the bridge for ~130s on first-time PIN setup (logcat 2026-05-10).
-// The native path eliminates the hang AND lets us run a security-
-// reasonable iter count (100k → ~14h offline brute-force on a
-// 6-digit PIN at 100M ops/sec on commodity hardware).
-//
-// We use PBKDF2 (not Argon2) because Argon2's memory-hardness is
-// wasted on a 6-digit PIN (the small search space is the limit, not
-// GPU advantage), pure-JS Argon2 is too slow on Hermes, and PBKDF2
-// is mandatory in Android since API 26.
+// In tests, the native bridge is mocked via
+// __tests__/helpers/cryptoMockImpl.ts which delegates to noble's
+// pbkdf2 — so test round-trips still work without dragging @noble
+// into the production bundle.
 
-import {pbkdf2} from '@noble/hashes/pbkdf2.js';
-import {sha256} from '@noble/hashes/sha2.js';
 import {encodeUtf8} from '../sdk/utf8';
 import CopilotOverlay from '../native/CopilotOverlay';
 
-// Production iter count. Validated by the JDK PBKDF2 path running in
-// well under 100ms; if you change this, also update the readVault
-// path in `vault.ts` which honours the iter count stored in the
-// envelope (so old vaults still decrypt).
+// Production iter count. The JDK PBKDF2 path runs in well under
+// 100ms even at 100k. vault.ts honours the iter count stored in
+// each envelope, so old vaults written under different counts still
+// decrypt at whatever they were written with.
 export const DEFAULT_PBKDF2_ITERATIONS = 100_000;
-// Fallback iter count for the pure-JS path. Picked to keep the
-// bridge-blocked window under ~10s on the worst observed Hermes
-// throughput (~400 iters/sec on Supernote A6X). Existing vaults
-// written under this iter count would be weaker; documented.
-export const FALLBACK_PBKDF2_ITERATIONS = 4_000;
 export const KEY_LENGTH_BYTES = 32; // AES-256
 export const SALT_LENGTH_BYTES = 16;
 
@@ -95,22 +84,18 @@ export const deriveKey = async (
   params: KdfParams = DEFAULT_KDF_PARAMS,
 ): Promise<Uint8Array> => {
   validate(passphrase, salt, params);
-  const passwordBytes = encodeUtf8(passphrase);
-  // Try native first. The result.success === false branch falls
-  // through to pure-JS so the unit suite (no native module) still
-  // runs and we degrade gracefully on hosts that don't expose the
-  // crypto bridge.
   const native = await CopilotOverlay.cryptoPbkdf2Sha256(
-    bytesToBase64(passwordBytes),
+    bytesToBase64(encodeUtf8(passphrase)),
     bytesToBase64(salt),
     params.iterations,
     KEY_LENGTH_BYTES,
   );
-  if (native.success && typeof native.bytesB64 === 'string') {
-    return base64ToBytes(native.bytesB64);
+  if (!native.success || typeof native.bytesB64 !== 'string') {
+    throw new Error(
+      `deriveKey: native PBKDF2 unavailable (${native.code}: ${native.message}). ` +
+        'CopilotOverlayModule must expose cryptoPbkdf2Sha256 — check the ' +
+        'native build registration.',
+    );
   }
-  return pbkdf2(sha256, passwordBytes, salt, {
-    c: params.iterations,
-    dkLen: KEY_LENGTH_BYTES,
-  });
+  return base64ToBytes(native.bytesB64);
 };

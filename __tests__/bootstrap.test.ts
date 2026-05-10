@@ -57,16 +57,30 @@ jest.mock('sn-plugin-lib', () => ({
 const mockOpen = jest.fn();
 const mockGetScreenSize = jest.fn();
 
-jest.mock('../src/native/CopilotOverlay', () => ({
-  __esModule: true,
-  default: {
-    open: (w: number, h: number, x: number, y: number) =>
-      mockOpen(w, h, x, y),
-    getScreenSize: () => mockGetScreenSize(),
-    close: jest.fn(),
-    copyToClipboard: jest.fn(),
-  },
-}));
+jest.mock('../src/native/CopilotOverlay', () => {
+  const {
+    cryptoPbkdf2Sha256MockImpl,
+    cryptoRandomBytesMockImpl,
+  } = require('./helpers/cryptoMockImpl');
+  return {
+    __esModule: true,
+    default: {
+      open: (w: number, h: number, x: number, y: number) =>
+        mockOpen(w, h, x, y),
+      getScreenSize: () => mockGetScreenSize(),
+      close: jest.fn(),
+      copyToClipboard: jest.fn(),
+      // index.js's secure-lifecycle install touches the crypto bridge
+      // through buildWiringBundle → readPrefs (which doesn't actually
+      // call crypto, but the wiring bundle constructs CopilotOverlay
+      // refs eagerly). Provide working impls so a future test that
+      // exercises a real secure flow doesn't have to add the mock.
+      writeFileBase64: jest.fn(async () => ({success: true, code: 'OK', message: ''})),
+      cryptoPbkdf2Sha256: jest.fn(cryptoPbkdf2Sha256MockImpl),
+      cryptoRandomBytes: jest.fn(cryptoRandomBytesMockImpl),
+    },
+  };
+});
 
 const mockCaptureCurrentPage = jest.fn();
 jest.mock('../src/scope/captureScreenshot', () => ({

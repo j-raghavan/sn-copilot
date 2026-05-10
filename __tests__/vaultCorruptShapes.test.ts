@@ -4,6 +4,20 @@
  * defect so the relevant rejection branch in `looksLikeKeyFile` /
  * `parseFiles` fires.
  */
+jest.mock('../src/native/CopilotOverlay', () => {
+  const {
+    cryptoPbkdf2Sha256MockImpl,
+    cryptoRandomBytesMockImpl,
+  } = require('./helpers/cryptoMockImpl');
+  return {
+    __esModule: true,
+    default: {
+      cryptoPbkdf2Sha256: jest.fn(cryptoPbkdf2Sha256MockImpl),
+      cryptoRandomBytes: jest.fn(cryptoRandomBytesMockImpl),
+    },
+  };
+});
+
 import {readVault, writeVault} from '../src/storage/vault';
 import {DEFAULT_KDF_PARAMS, SALT_LENGTH_BYTES, deriveKey} from '../src/crypto/kdf';
 import {encrypt} from '../src/crypto/aesGcm';

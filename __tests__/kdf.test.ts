@@ -6,40 +6,48 @@
  *   3. Different salt or different passphrase → different key.
  *   4. Argument validation: empty passphrase, wrong-size salt, bad
  *      iteration count.
- *   5. Native bridge path: when CopilotOverlay.cryptoPbkdf2Sha256
- *      returns success, deriveKey uses its bytes (no pure-JS run).
- *      When it fails, the JS fallback fires.
+ *   5. Native bridge failure → throws (no silent JS fallback in
+ *      production).
  *
- * `deriveKey` is async — production path delegates to the native
- * JDK PBKDF2; tests use the JS fallback by default.
+ * `deriveKey` is async and only runs through the native bridge.
+ * Tests mock that bridge to delegate to noble's pbkdf2 so round-
+ * trips work; production-side @noble/hashes is dev-only.
  */
 const mockCryptoPbkdf2 = jest.fn<
   Promise<{success: boolean; code: string; message: string; bytesB64?: string}>,
   [string, string, number, number]
 >();
-jest.mock('../src/native/CopilotOverlay', () => ({
-  __esModule: true,
-  default: {
-    cryptoPbkdf2Sha256: (
-      pwd: string,
-      salt: string,
-      iters: number,
-      dkLen: number,
-    ) => mockCryptoPbkdf2(pwd, salt, iters, dkLen),
-  },
-}));
+jest.mock('../src/native/CopilotOverlay', () => {
+  const {cryptoPbkdf2Sha256MockImpl} = require('./helpers/cryptoMockImpl');
+  // Wire the spy AROUND the real impl so individual tests can override
+  // by changing the spy's implementation.
+  mockCryptoPbkdf2Default = cryptoPbkdf2Sha256MockImpl;
+  return {
+    __esModule: true,
+    default: {
+      cryptoPbkdf2Sha256: (
+        pwd: string,
+        salt: string,
+        iters: number,
+        dkLen: number,
+      ) => mockCryptoPbkdf2(pwd, salt, iters, dkLen),
+    },
+  };
+});
+
+let mockCryptoPbkdf2Default:
+  | ((pwd: string, salt: string, iters: number, dkLen: number) =>
+      Promise<{success: boolean; code: string; message: string; bytesB64?: string}>)
+  | undefined;
 
 import {DEFAULT_KDF_PARAMS, KEY_LENGTH_BYTES, SALT_LENGTH_BYTES, deriveKey} from '../src/crypto/kdf';
 
 beforeEach(() => {
   mockCryptoPbkdf2.mockReset();
-  // Default: native bridge fails so the JS fallback runs (matches
-  // legacy test assertions about determinism / sensitivity).
-  mockCryptoPbkdf2.mockResolvedValue({
-    success: false,
-    code: 'MODULE_MISSING',
-    message: 'mock',
-  });
+  // Default: pretend the native bridge is healthy by delegating to
+  // the noble-backed mock impl. Individual tests override by calling
+  // `mockCryptoPbkdf2.mockResolvedValueOnce(...)`.
+  mockCryptoPbkdf2.mockImplementation(mockCryptoPbkdf2Default!);
 });
 
 // Use a tiny iteration count for tests so the suite stays fast. The
@@ -134,7 +142,6 @@ describe('deriveKey — argument validation', () => {
 
 describe('deriveKey — native bridge', () => {
   it('returns native bytes verbatim when cryptoPbkdf2Sha256 succeeds', async () => {
-    // 32 zero bytes → base64 of 32 zero bytes
     const fakeKeyB64 = Buffer.alloc(KEY_LENGTH_BYTES, 0).toString('base64');
     mockCryptoPbkdf2.mockResolvedValueOnce({
       success: true,
@@ -152,21 +159,25 @@ describe('deriveKey — native bridge', () => {
     expect(dkLen).toBe(KEY_LENGTH_BYTES);
   });
 
-  it('falls through to JS pbkdf2 when native fails', async () => {
+  it('throws when native pbkdf2 reports failure (no silent fallback)', async () => {
     mockCryptoPbkdf2.mockResolvedValueOnce({
       success: false,
       code: 'PBKDF2_FAILED',
-      message: 'mock',
+      message: 'JCE provider missing',
     });
-    const key = await deriveKey('hunter2', sampleSalt(1), FAST);
-    expect(key.length).toBe(KEY_LENGTH_BYTES);
-    // The JS path is deterministic, so two fallback runs match.
+    await expect(deriveKey('hunter2', sampleSalt(1), FAST)).rejects.toThrow(
+      /native PBKDF2 unavailable.*PBKDF2_FAILED/,
+    );
+  });
+
+  it('throws when native returns success but no bytesB64', async () => {
     mockCryptoPbkdf2.mockResolvedValueOnce({
-      success: false,
-      code: 'PBKDF2_FAILED',
-      message: 'mock',
+      success: true,
+      code: 'OK',
+      message: 'empty',
     });
-    const key2 = await deriveKey('hunter2', sampleSalt(1), FAST);
-    expect(Buffer.from(key).toString('hex')).toBe(Buffer.from(key2).toString('hex'));
+    await expect(deriveKey('hunter2', sampleSalt(1), FAST)).rejects.toThrow(
+      /native PBKDF2 unavailable/,
+    );
   });
 });

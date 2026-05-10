@@ -6,6 +6,20 @@
  *   3. sessionKey changes flip state from 'locked' to 'unlocked'.
  *   4. refresh re-reads everything.
  */
+jest.mock('../src/native/CopilotOverlay', () => {
+  const {
+    cryptoPbkdf2Sha256MockImpl,
+    cryptoRandomBytesMockImpl,
+  } = require('./helpers/cryptoMockImpl');
+  return {
+    __esModule: true,
+    default: {
+      cryptoPbkdf2Sha256: jest.fn(cryptoPbkdf2Sha256MockImpl),
+      cryptoRandomBytes: jest.fn(cryptoRandomBytesMockImpl),
+    },
+  };
+});
+
 import React from 'react';
 import {act, create, ReactTestRenderer} from 'react-test-renderer';
 import {Text, View} from 'react-native';

@@ -34,20 +34,22 @@ jest.mock('sn-plugin-lib', () => ({
   },
 }));
 
-jest.mock('../src/native/CopilotOverlay', () => ({
-  __esModule: true,
-  default: {
-    close: () => mockClose(),
-    copyToClipboard: jest.fn(async () => ({success: true, code: 'OK', message: ''})),
-    writeFileBase64: (path: string, b64: string) => mockWriteFileBase64(path, b64),
-    cryptoPbkdf2Sha256: jest.fn(async () => ({
-      success: false, code: 'MODULE_MISSING', message: 'mock',
-    })),
-    cryptoRandomBytes: jest.fn(async () => ({
-      success: false, code: 'MODULE_MISSING', message: 'mock',
-    })),
-  },
-}));
+jest.mock('../src/native/CopilotOverlay', () => {
+  const {
+    cryptoPbkdf2Sha256MockImpl,
+    cryptoRandomBytesMockImpl,
+  } = require('./helpers/cryptoMockImpl');
+  return {
+    __esModule: true,
+    default: {
+      close: () => mockClose(),
+      copyToClipboard: jest.fn(async () => ({success: true, code: 'OK', message: ''})),
+      writeFileBase64: (path: string, b64: string) => mockWriteFileBase64(path, b64),
+      cryptoPbkdf2Sha256: jest.fn(cryptoPbkdf2Sha256MockImpl),
+      cryptoRandomBytes: jest.fn(cryptoRandomBytesMockImpl),
+    },
+  };
+});
 
 const mockFetch = jest.fn();
 beforeAll(() => {

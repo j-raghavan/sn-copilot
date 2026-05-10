@@ -10,6 +10,20 @@
  *   8. Each path returns {ok:false, reason} on underlying failure.
  *   9. isInsecure() classifies modes.
  */
+jest.mock('../src/native/CopilotOverlay', () => {
+  const {
+    cryptoPbkdf2Sha256MockImpl,
+    cryptoRandomBytesMockImpl,
+  } = require('./helpers/cryptoMockImpl');
+  return {
+    __esModule: true,
+    default: {
+      cryptoPbkdf2Sha256: jest.fn(cryptoPbkdf2Sha256MockImpl),
+      cryptoRandomBytes: jest.fn(cryptoRandomBytesMockImpl),
+    },
+  };
+});
+
 import {DEFAULT_PREFS} from '../src/types';
 import {
   __testing__ as sessionTesting,

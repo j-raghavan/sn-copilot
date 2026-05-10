@@ -143,46 +143,42 @@ describe('randomBytes (async) — native bridge', () => {
     expect(mockCryptoRandomBytes).toHaveBeenCalledWith(4);
   });
 
-  it('falls through to the sync chain when native fails', async () => {
-    setCrypto({
-      getRandomValues: (buf: Uint8Array) => {
-        for (let i = 0; i < buf.length; i++) {
-          buf[i] = 42;
-        }
-        return buf;
-      },
-    });
+  it('throws when native fails (no silent fallback)', async () => {
     mockCryptoRandomBytes.mockResolvedValueOnce({
       success: false,
       code: 'RANDOM_FAILED',
-      message: 'mock',
+      message: 'JCE provider missing',
     });
-    const out = await randomBytes(8);
-    expect(out.length).toBe(8);
-    expect(out[0]).toBe(42);
+    await expect(randomBytes(8)).rejects.toThrow(
+      /native SecureRandom unavailable.*RANDOM_FAILED/,
+    );
   });
 
-  it('falls through when native returns a wrong-length payload', async () => {
-    setCrypto({
-      getRandomValues: (buf: Uint8Array) => {
-        for (let i = 0; i < buf.length; i++) {
-          buf[i] = 9;
-        }
-        return buf;
-      },
-    });
+  it('throws when native returns a wrong-length payload', async () => {
     mockCryptoRandomBytes.mockResolvedValueOnce({
       success: true,
       code: 'OK',
       message: '',
       bytesB64: 'AQIDBA==', // 4 bytes
     });
-    const out = await randomBytes(8); // asks for 8 — mismatch
-    expect(out.length).toBe(8);
-    expect(out[0]).toBe(9);
+    await expect(randomBytes(8)).rejects.toThrow(
+      /returned 4 bytes, expected 8/,
+    );
   });
 
-  it('validates length the same as the sync path', async () => {
+  it('throws when native returns success but no bytesB64', async () => {
+    mockCryptoRandomBytes.mockResolvedValueOnce({
+      success: true,
+      code: 'OK',
+      message: 'oops',
+    });
+    await expect(randomBytes(8)).rejects.toThrow(
+      /native SecureRandom unavailable/,
+    );
+  });
+
+  it('validates length before calling native', async () => {
     await expect(randomBytes(0)).rejects.toThrow(/positive integer/);
+    expect(mockCryptoRandomBytes).not.toHaveBeenCalled();
   });
 });

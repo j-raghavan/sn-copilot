@@ -1,25 +1,29 @@
 // Entropy source for KDF salts and AES-GCM nonces.
 //
-// Three execution paths, in preference order:
+// Two functions, two policies:
 //
-//   1. **Native (preferred)**: CopilotOverlay.cryptoRandomBytes →
-//      java.security.SecureRandom. Real entropy from the OS CSPRNG.
+//   - `randomBytes` (async): the production entrypoint for ANY caller
+//     that wants real entropy (KDF salts). Calls
+//     CopilotOverlay.cryptoRandomBytes → java.security.SecureRandom.
+//     If the native bridge isn't available, throws — same reasoning
+//     as kdf.ts: a silent fallback would mask a packaging regression
+//     and downgrade us to the uniqueness-only generator without the
+//     caller realizing it. SecureRandom is a JDK guarantee on every
+//     Android API we support.
 //
-//   2. **WebCrypto**: globalThis.crypto.getRandomValues. Available on
-//      modern Hermes / browsers / node — but Supernote firmware does
-//      not provide it, so this branch is mostly for the Jest test
-//      environment.
+//   - `randomBytesSync`: kept for the rare site that genuinely cannot
+//     await — currently only AES-GCM nonce generation in
+//     `aesGcm.encrypt`, where the rest of the call chain is sync.
+//     Tries WebCrypto, falls back to a uniqueness-only generator.
+//     The fallback is acceptable for nonces (they need uniqueness,
+//     not secrecy — they're stored alongside the ciphertext and the
+//     PIN-derived key is what protects the payload). It's NOT
+//     acceptable for KDF salts under serious attack, which is why
+//     KDF salts go through the async path.
 //
-//   3. **Uniqueness-only fallback**: a counter + Date.now + a per-
-//      process spread derived from Math.random at module init.
-//      Acceptable for salts/nonces (they need uniqueness, not
-//      secrecy) but NOT for any other security purpose. Documented
-//      in the function header.
-//
-// The async `randomBytes` is the only export that should be used by
-// new code. `randomBytesSync` is kept around for the rare case where
-// a sync API is unavoidable (test fixtures, etc.) and falls through
-// the WebCrypto + JS-only paths only.
+// Tests mock CopilotOverlay.cryptoRandomBytes via
+// __tests__/helpers/cryptoMockImpl.ts so async randomBytes works
+// under jest without dragging the JS-only chain through production.
 
 import CopilotOverlay from '../native/CopilotOverlay';
 
@@ -76,7 +80,7 @@ const fillFromFallback = (out: Uint8Array): void => {
     warnedAboutFallback = true;
     console.warn(
       `${TAG} crypto.getRandomValues is unavailable; using uniqueness-only fallback ` +
-        'for salts/nonces. This does not weaken vault confidentiality (see module header).',
+        'for sync random (AES-GCM nonces). This does not weaken vault confidentiality (see module header).',
     );
   }
   const now = Date.now();
@@ -127,24 +131,33 @@ const validateLength = (length: number): void => {
   }
 };
 
-// Async path — the production entrypoint. Tries the native bridge
-// first (true CSPRNG), then falls through to WebCrypto, then to the
-// JS-only uniqueness generator.
+// Async path — the production entrypoint for KDF salts. Hard-fails
+// when the native bridge is unavailable so a packaging regression
+// surfaces as an error the user can act on, rather than silently
+// downgrading.
 export const randomBytes = async (length: number): Promise<Uint8Array> => {
   validateLength(length);
   const native = await CopilotOverlay.cryptoRandomBytes(length);
-  if (native.success && typeof native.bytesB64 === 'string') {
-    const bytes = base64ToBytes(native.bytesB64);
-    if (bytes.length === length) {
-      return bytes;
-    }
+  if (!native.success || typeof native.bytesB64 !== 'string') {
+    throw new Error(
+      `randomBytes: native SecureRandom unavailable (${native.code}: ${native.message}). ` +
+        'CopilotOverlayModule must expose cryptoRandomBytes — check the native build registration.',
+    );
   }
-  return randomBytesSync(length);
+  const bytes = base64ToBytes(native.bytesB64);
+  if (bytes.length !== length) {
+    throw new Error(
+      `randomBytes: native SecureRandom returned ${bytes.length} bytes, expected ${length}`,
+    );
+  }
+  return bytes;
 };
 
-// Sync escape hatch — used by tests and by the JS-only paths above.
-// Skips the native bridge (it's async) but otherwise mirrors the
-// fallback chain.
+// Sync escape hatch — used by AES-GCM nonce generation only.
+// WebCrypto when present (modern Hermes / browsers / node), falls
+// back to a uniqueness-only generator on Hermes-without-WebCrypto.
+// Acceptable for nonces; do not use for anything that needs real
+// entropy.
 export const randomBytesSync = (length: number): Uint8Array => {
   validateLength(length);
   const out = new Uint8Array(length);

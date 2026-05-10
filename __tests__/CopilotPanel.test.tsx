@@ -13,28 +13,30 @@ const mockClose = jest.fn(async () => ({
   message: 'fixture',
 }));
 
-jest.mock('../src/native/CopilotOverlay', () => ({
-  __esModule: true,
-  default: {
-    close: () => mockClose(),
-    copyToClipboard: jest.fn(async () => ({
-      success: true,
-      code: 'OK',
-      message: 'fixture',
-    })),
-    writeFileBase64: jest.fn(async () => ({
-      success: true,
-      code: 'OK',
-      message: 'fixture',
-    })),
-    cryptoPbkdf2Sha256: jest.fn(async () => ({
-      success: false, code: 'MODULE_MISSING', message: 'mock',
-    })),
-    cryptoRandomBytes: jest.fn(async () => ({
-      success: false, code: 'MODULE_MISSING', message: 'mock',
-    })),
-  },
-}));
+jest.mock('../src/native/CopilotOverlay', () => {
+  const {
+    cryptoPbkdf2Sha256MockImpl,
+    cryptoRandomBytesMockImpl,
+  } = require('./helpers/cryptoMockImpl');
+  return {
+    __esModule: true,
+    default: {
+      close: () => mockClose(),
+      copyToClipboard: jest.fn(async () => ({
+        success: true,
+        code: 'OK',
+        message: 'fixture',
+      })),
+      writeFileBase64: jest.fn(async () => ({
+        success: true,
+        code: 'OK',
+        message: 'fixture',
+      })),
+      cryptoPbkdf2Sha256: jest.fn(cryptoPbkdf2Sha256MockImpl),
+      cryptoRandomBytes: jest.fn(cryptoRandomBytesMockImpl),
+    },
+  };
+});
 
 // sn-plugin-lib uses ESM `import` statements that jest doesn't
 // transform by default. Mock it here so CopilotPanel's
