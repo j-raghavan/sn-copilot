@@ -14,7 +14,12 @@
 // message ("wrong PIN" vs "vault file corrupt").
 
 import {gcm} from '@noble/ciphers/aes.js';
-import {randomBytes} from './randomBytes';
+// encrypt() stays sync to avoid cascading async through every caller.
+// The native CSPRNG would require an async hop; for a vault that
+// encrypts once per save with a fresh KDF salt, the uniqueness-only
+// nonce path is acceptable (nonce reuse only matters when the same
+// key is used many times — see module header).
+import {randomBytesSync} from './randomBytes';
 
 export const NONCE_LENGTH_BYTES = 12;
 const TAG_LENGTH_BYTES = 16;
@@ -38,7 +43,7 @@ export const encrypt = (key: Uint8Array, plaintext: Uint8Array): Uint8Array => {
   if (!(plaintext instanceof Uint8Array)) {
     throw new TypeError('aesGcm.encrypt: plaintext must be a Uint8Array');
   }
-  const nonce = randomBytes(NONCE_LENGTH_BYTES);
+  const nonce = randomBytesSync(NONCE_LENGTH_BYTES);
   const ciphertext = gcm(key, nonce).encrypt(plaintext);
   const out = new Uint8Array(NONCE_LENGTH_BYTES + ciphertext.length);
   out.set(nonce, 0);

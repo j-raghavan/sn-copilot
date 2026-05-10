@@ -20,12 +20,25 @@ export type OverlayResultCode =
   | 'PARENT_MISSING'
   | 'BAD_BASE64'
   | 'WRITE_FAILED'
+  | 'BAD_PARAMS'
+  | 'ALGO_MISSING'
+  | 'PBKDF2_FAILED'
+  | 'RANDOM_FAILED'
   | 'MODULE_MISSING';
 
 export type OverlayResult = {
   success: boolean;
   code: OverlayResultCode;
   message: string;
+};
+
+// Crypto results carry the derived bytes (or random bytes) base64-
+// encoded on success. The bytesB64 field is omitted on failure.
+export type CryptoResult = {
+  success: boolean;
+  code: OverlayResultCode;
+  message: string;
+  bytesB64?: string;
 };
 
 export type ScreenSize = {
@@ -43,6 +56,13 @@ type NativeShape = {
   getScreenSize(): Promise<ScreenSize>;
   copyToClipboard(text: string, label: string | null): Promise<OverlayResult>;
   writeFileBase64(path: string, base64Content: string): Promise<OverlayResult>;
+  cryptoPbkdf2Sha256(
+    passwordUtf8B64: string,
+    saltB64: string,
+    iterations: number,
+    keyLengthBytes: number,
+  ): Promise<CryptoResult>;
+  cryptoRandomBytes(length: number): Promise<CryptoResult>;
 };
 
 const moduleMissingResult: OverlayResult = {
@@ -54,6 +74,12 @@ const moduleMissingResult: OverlayResult = {
     'CopilotOverlayPackage in MainApplication.kt and ran the gradle ' +
     'native build) or the JS bundle is running in a host that does not ' +
     'expose this module.',
+};
+
+const moduleMissingCryptoResult: CryptoResult = {
+  success: false,
+  code: 'MODULE_MISSING',
+  message: moduleMissingResult.message,
 };
 
 const moduleMissingScreenSize: ScreenSize = {
@@ -135,6 +161,32 @@ export async function writeFileBase64(
   return native.writeFileBase64(path, base64Content);
 }
 
+export async function cryptoPbkdf2Sha256(
+  passwordUtf8B64: string,
+  saltB64: string,
+  iterations: number,
+  keyLengthBytes: number,
+): Promise<CryptoResult> {
+  const native = nativeOrNull();
+  if (!native || typeof native.cryptoPbkdf2Sha256 !== 'function') {
+    return moduleMissingCryptoResult;
+  }
+  return native.cryptoPbkdf2Sha256(
+    passwordUtf8B64,
+    saltB64,
+    iterations,
+    keyLengthBytes,
+  );
+}
+
+export async function cryptoRandomBytes(length: number): Promise<CryptoResult> {
+  const native = nativeOrNull();
+  if (!native || typeof native.cryptoRandomBytes !== 'function') {
+    return moduleMissingCryptoResult;
+  }
+  return native.cryptoRandomBytes(length);
+}
+
 // Convenience for tests / future callers that prefer a single object.
 const CopilotOverlay = {
   open,
@@ -144,5 +196,7 @@ const CopilotOverlay = {
   getScreenSize,
   copyToClipboard,
   writeFileBase64,
+  cryptoPbkdf2Sha256,
+  cryptoRandomBytes,
 };
 export default CopilotOverlay;

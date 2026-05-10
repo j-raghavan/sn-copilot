@@ -253,7 +253,7 @@ export const writeVault = async (
   files: KeyFile[],
 ): Promise<void> => {
   const logger = deps.logger ?? noopLogger;
-  const salt = randomBytes(SALT_LENGTH_BYTES);
+  const salt = await randomBytes(SALT_LENGTH_BYTES);
   const key = await deriveKey(passphrase, salt, DEFAULT_KDF_PARAMS);
   const inner = encodeUtf8(JSON.stringify({files}));
   const payload = encrypt(key, inner);

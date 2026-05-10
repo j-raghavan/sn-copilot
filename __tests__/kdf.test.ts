@@ -6,12 +6,41 @@
  *   3. Different salt or different passphrase → different key.
  *   4. Argument validation: empty passphrase, wrong-size salt, bad
  *      iteration count.
+ *   5. Native bridge path: when CopilotOverlay.cryptoPbkdf2Sha256
+ *      returns success, deriveKey uses its bytes (no pure-JS run).
+ *      When it fails, the JS fallback fires.
  *
- * `deriveKey` returns a Promise (uses pbkdf2Async so it can yield to
- * the event loop on slow runtimes — see kdf.ts header for the
- * Hermes-block incident that drove this).
+ * `deriveKey` is async — production path delegates to the native
+ * JDK PBKDF2; tests use the JS fallback by default.
  */
+const mockCryptoPbkdf2 = jest.fn<
+  Promise<{success: boolean; code: string; message: string; bytesB64?: string}>,
+  [string, string, number, number]
+>();
+jest.mock('../src/native/CopilotOverlay', () => ({
+  __esModule: true,
+  default: {
+    cryptoPbkdf2Sha256: (
+      pwd: string,
+      salt: string,
+      iters: number,
+      dkLen: number,
+    ) => mockCryptoPbkdf2(pwd, salt, iters, dkLen),
+  },
+}));
+
 import {DEFAULT_KDF_PARAMS, KEY_LENGTH_BYTES, SALT_LENGTH_BYTES, deriveKey} from '../src/crypto/kdf';
+
+beforeEach(() => {
+  mockCryptoPbkdf2.mockReset();
+  // Default: native bridge fails so the JS fallback runs (matches
+  // legacy test assertions about determinism / sensitivity).
+  mockCryptoPbkdf2.mockResolvedValue({
+    success: false,
+    code: 'MODULE_MISSING',
+    message: 'mock',
+  });
+});
 
 // Use a tiny iteration count for tests so the suite stays fast. The
 // real default exercises the production cost via the vault tests.
@@ -96,9 +125,48 @@ describe('deriveKey — argument validation', () => {
 
   it('exposes a frozen DEFAULT_KDF_PARAMS', () => {
     expect(Object.isFrozen(DEFAULT_KDF_PARAMS)).toBe(true);
-    // 50k is the production default — high enough for ~14h offline
-    // brute-force on a 6-digit PIN, low enough to be bearable on
-    // Hermes (sync 200k blocked the bridge for ~30s).
+    // Production default is 100k (native JDK path runs sub-100ms).
+    // Vault.ts honours the iter count stored in each envelope, so old
+    // vaults still decrypt at whatever iter count they were written.
     expect(DEFAULT_KDF_PARAMS.iterations).toBeGreaterThanOrEqual(10_000);
+  });
+});
+
+describe('deriveKey — native bridge', () => {
+  it('returns native bytes verbatim when cryptoPbkdf2Sha256 succeeds', async () => {
+    // 32 zero bytes → base64 of 32 zero bytes
+    const fakeKeyB64 = Buffer.alloc(KEY_LENGTH_BYTES, 0).toString('base64');
+    mockCryptoPbkdf2.mockResolvedValueOnce({
+      success: true,
+      code: 'OK',
+      message: '',
+      bytesB64: fakeKeyB64,
+    });
+    const key = await deriveKey('hunter2', sampleSalt(1), FAST);
+    expect(key.length).toBe(KEY_LENGTH_BYTES);
+    expect(key.every((b) => b === 0)).toBe(true);
+    // Native is called with the right shape.
+    expect(mockCryptoPbkdf2).toHaveBeenCalledTimes(1);
+    const [, , iters, dkLen] = mockCryptoPbkdf2.mock.calls[0];
+    expect(iters).toBe(FAST.iterations);
+    expect(dkLen).toBe(KEY_LENGTH_BYTES);
+  });
+
+  it('falls through to JS pbkdf2 when native fails', async () => {
+    mockCryptoPbkdf2.mockResolvedValueOnce({
+      success: false,
+      code: 'PBKDF2_FAILED',
+      message: 'mock',
+    });
+    const key = await deriveKey('hunter2', sampleSalt(1), FAST);
+    expect(key.length).toBe(KEY_LENGTH_BYTES);
+    // The JS path is deterministic, so two fallback runs match.
+    mockCryptoPbkdf2.mockResolvedValueOnce({
+      success: false,
+      code: 'PBKDF2_FAILED',
+      message: 'mock',
+    });
+    const key2 = await deriveKey('hunter2', sampleSalt(1), FAST);
+    expect(Buffer.from(key).toString('hex')).toBe(Buffer.from(key2).toString('hex'));
   });
 });

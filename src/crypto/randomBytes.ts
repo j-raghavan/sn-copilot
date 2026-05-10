@@ -1,29 +1,27 @@
-/* eslint-disable no-bitwise */
 // Entropy source for KDF salts and AES-GCM nonces.
 //
-// Constraint: the Supernote plugin runtime is JS-only on Hermes. We
-// cannot ship a native module like react-native-get-random-values, so
-// `globalThis.crypto.getRandomValues` may not exist. Plain `Math.random`
-// is unsuitable on its own.
+// Three execution paths, in preference order:
 //
-// Strategy:
-//   1. Prefer WebCrypto when present (modern Hermes, browsers, node).
-//   2. Otherwise compose a uniqueness-only generator: high-resolution
-//      time + a monotonic counter + a per-process nonce derived from
-//      `Math.random()` at module init.
+//   1. **Native (preferred)**: CopilotOverlay.cryptoRandomBytes →
+//      java.security.SecureRandom. Real entropy from the OS CSPRNG.
 //
-// Why the fallback is acceptable for the values we generate here:
-//   - PBKDF2 salts only need to be UNIQUE per encryption (so each
-//     password is brute-forced separately). Salt secrecy is not part
-//     of the security argument.
-//   - AES-GCM nonces only need to be UNIQUE per (key, message) pair.
-//     We persist the nonce alongside the ciphertext, so it is public
-//     anyway. Predictability is acceptable for a single-key-per-vault
-//     design where we control how many encryptions occur.
+//   2. **WebCrypto**: globalThis.crypto.getRandomValues. Available on
+//      modern Hermes / browsers / node — but Supernote firmware does
+//      not provide it, so this branch is mostly for the Jest test
+//      environment.
 //
-// The KDF security comes entirely from the user's PIN/passphrase
-// entropy and the iteration count. The fallback path does NOT degrade
-// confidentiality of the encrypted vault.
+//   3. **Uniqueness-only fallback**: a counter + Date.now + a per-
+//      process spread derived from Math.random at module init.
+//      Acceptable for salts/nonces (they need uniqueness, not
+//      secrecy) but NOT for any other security purpose. Documented
+//      in the function header.
+//
+// The async `randomBytes` is the only export that should be used by
+// new code. `randomBytesSync` is kept around for the rare case where
+// a sync API is unavoidable (test fixtures, etc.) and falls through
+// the WebCrypto + JS-only paths only.
+
+import CopilotOverlay from '../native/CopilotOverlay';
 
 const TAG = '[randomBytes]';
 
@@ -32,7 +30,9 @@ let counter = 0;
 const sessionSpread = (() => {
   // 64 bits of per-process spread so two devices that boot at the same
   // millisecond are still extremely unlikely to collide.
+  // eslint-disable-next-line no-bitwise
   const a = (Math.random() * 0xffffffff) >>> 0;
+  // eslint-disable-next-line no-bitwise
   const b = (Math.random() * 0xffffffff) >>> 0;
   return [a, b] as const;
 })();
@@ -60,12 +60,17 @@ const fillFromWebCrypto = (out: Uint8Array): void => {
 };
 
 const writeUint32BE = (out: Uint8Array, off: number, v: number): void => {
+  // eslint-disable-next-line no-bitwise
   out[off] = (v >>> 24) & 0xff;
+  // eslint-disable-next-line no-bitwise
   out[off + 1] = (v >>> 16) & 0xff;
+  // eslint-disable-next-line no-bitwise
   out[off + 2] = (v >>> 8) & 0xff;
+  // eslint-disable-next-line no-bitwise
   out[off + 3] = v & 0xff;
 };
 
+/* eslint-disable no-bitwise */
 const fillFromFallback = (out: Uint8Array): void => {
   if (!warnedAboutFallback) {
     warnedAboutFallback = true;
@@ -74,10 +79,6 @@ const fillFromFallback = (out: Uint8Array): void => {
         'for salts/nonces. This does not weaken vault confidentiality (see module header).',
     );
   }
-  // Pattern: cycle a 16-byte block of (counter, hi, lo, spread0, spread1)
-  // and run a tiny diffusion (xorshift32) over it. The output never
-  // repeats within a process and is unique across processes with very
-  // high probability.
   const now = Date.now();
   const hi = Math.floor(now / 0x100000000) >>> 0;
   const lo = (now >>> 0) >>> 0;
@@ -90,8 +91,6 @@ const fillFromFallback = (out: Uint8Array): void => {
     writeUint32BE(block, 8, lo);
     writeUint32BE(block, 12, sessionSpread[0]);
     writeUint32BE(block, 16, sessionSpread[1]);
-    // xorshift32 over each 4-byte word for a tiny avalanche so adjacent
-    // bytes don't carry obvious time/counter structure.
     for (let w = 0; w < 5; w++) {
       let x =
         ((block[w * 4] << 24) |
@@ -111,11 +110,43 @@ const fillFromFallback = (out: Uint8Array): void => {
     off += take;
   }
 };
+/* eslint-enable no-bitwise */
 
-export const randomBytes = (length: number): Uint8Array => {
+const base64ToBytes = (b64: string): Uint8Array => {
+  const bin = globalThis.atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    out[i] = bin.charCodeAt(i);
+  }
+  return out;
+};
+
+const validateLength = (length: number): void => {
   if (!Number.isInteger(length) || length < 1) {
     throw new RangeError(`randomBytes: length must be a positive integer, got ${length}`);
   }
+};
+
+// Async path — the production entrypoint. Tries the native bridge
+// first (true CSPRNG), then falls through to WebCrypto, then to the
+// JS-only uniqueness generator.
+export const randomBytes = async (length: number): Promise<Uint8Array> => {
+  validateLength(length);
+  const native = await CopilotOverlay.cryptoRandomBytes(length);
+  if (native.success && typeof native.bytesB64 === 'string') {
+    const bytes = base64ToBytes(native.bytesB64);
+    if (bytes.length === length) {
+      return bytes;
+    }
+  }
+  return randomBytesSync(length);
+};
+
+// Sync escape hatch — used by tests and by the JS-only paths above.
+// Skips the native bridge (it's async) but otherwise mirrors the
+// fallback chain.
+export const randomBytesSync = (length: number): Uint8Array => {
+  validateLength(length);
   const out = new Uint8Array(length);
   if (hasWebCrypto()) {
     fillFromWebCrypto(out);

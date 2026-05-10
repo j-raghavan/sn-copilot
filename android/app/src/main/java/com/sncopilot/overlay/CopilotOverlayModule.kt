@@ -472,6 +472,114 @@ class CopilotOverlayModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * PBKDF2-HMAC-SHA256 via the JDK's `SecretKeyFactory`. On Hermes,
+   * a pure-JS implementation runs at ~400 iters/sec on this device
+   * (logcat 2026-05-10 measured 50k iters in 130s). The JDK path is
+   * 100k+ iters/sec — sub-100ms for any realistic count — because it
+   * delegates to the device's native crypto provider.
+   *
+   * Returns {success, code, message} like the other methods plus
+   * `derivedKeyB64` on success. Caller passes the password as
+   * base64-encoded UTF-8 bytes (avoids string-encoding round-trips
+   * on the bridge).
+   */
+  @ReactMethod
+  fun cryptoPbkdf2Sha256(
+      passwordUtf8B64: String,
+      saltB64: String,
+      iterations: Int,
+      keyLengthBytes: Int,
+      promise: Promise,
+  ) {
+    if (iterations < 1) {
+      promise.resolve(buildCryptoResult(false, "BAD_PARAMS",
+          "iterations must be >= 1, got $iterations", null))
+      return
+    }
+    if (keyLengthBytes < 1 || keyLengthBytes > 1024) {
+      promise.resolve(buildCryptoResult(false, "BAD_PARAMS",
+          "keyLengthBytes must be in 1..1024, got $keyLengthBytes", null))
+      return
+    }
+    try {
+      val passwordBytes = android.util.Base64.decode(passwordUtf8B64, android.util.Base64.DEFAULT)
+      val saltBytes = android.util.Base64.decode(saltB64, android.util.Base64.DEFAULT)
+      // SecretKeyFactory expects the password as a char[]. We round-
+      // trip through ISO_8859_1 (a 1:1 byte→char mapping) so the
+      // bytes pass through unchanged — the underlying PBKDF2 spec
+      // operates on bytes anyway.
+      val passwordChars = String(passwordBytes, Charsets.ISO_8859_1).toCharArray()
+      val spec = javax.crypto.spec.PBEKeySpec(
+          passwordChars, saltBytes, iterations, keyLengthBytes * 8,
+      )
+      val factory = javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+      val derivedBytes = factory.generateSecret(spec).encoded
+      // Wipe the char[] copy; the SDK doesn't.
+      java.util.Arrays.fill(passwordChars, ' ')
+      val b64 = android.util.Base64.encodeToString(derivedBytes,
+          android.util.Base64.NO_WRAP)
+      promise.resolve(buildCryptoResult(true, "OK",
+          "Derived $keyLengthBytes bytes in $iterations iters", b64))
+    } catch (e: IllegalArgumentException) {
+      promise.resolve(buildCryptoResult(false, "BAD_BASE64",
+          "Invalid base64 input: ${e.message}", null))
+    } catch (e: java.security.NoSuchAlgorithmException) {
+      // Should never happen on Android (PBKDF2WithHmacSHA256 is
+      // mandatory since API 26), but surface it cleanly so callers
+      // can fall back to the pure-JS path.
+      promise.resolve(buildCryptoResult(false, "ALGO_MISSING",
+          "PBKDF2WithHmacSHA256 not available: ${e.message}", null))
+    } catch (e: Throwable) {
+      val msg = "${e.javaClass.simpleName}: ${e.message}"
+      Log.e(TAG, "[COPILOT_OVERLAY] cryptoPbkdf2Sha256: $msg", e)
+      promise.resolve(buildCryptoResult(false, "PBKDF2_FAILED", msg, null))
+    }
+  }
+
+  /**
+   * Cryptographically secure random bytes via `SecureRandom`. The
+   * JS-only fallback in `src/crypto/randomBytes.ts` uses a
+   * uniqueness-only generator (Date.now + counter) when WebCrypto is
+   * unavailable, which is acceptable for salts/nonces but not for
+   * any other security purpose. This method gives us real entropy.
+   */
+  @ReactMethod
+  fun cryptoRandomBytes(length: Int, promise: Promise) {
+    if (length < 1 || length > 65_536) {
+      promise.resolve(buildCryptoResult(false, "BAD_PARAMS",
+          "length must be in 1..65536, got $length", null))
+      return
+    }
+    try {
+      val out = ByteArray(length)
+      java.security.SecureRandom().nextBytes(out)
+      val b64 = android.util.Base64.encodeToString(out, android.util.Base64.NO_WRAP)
+      promise.resolve(buildCryptoResult(true, "OK",
+          "Generated $length bytes", b64))
+    } catch (e: Throwable) {
+      val msg = "${e.javaClass.simpleName}: ${e.message}"
+      Log.e(TAG, "[COPILOT_OVERLAY] cryptoRandomBytes: $msg", e)
+      promise.resolve(buildCryptoResult(false, "RANDOM_FAILED", msg, null))
+    }
+  }
+
+  private fun buildCryptoResult(
+      success: Boolean,
+      code: String,
+      message: String,
+      bytesB64: String?,
+  ): WritableMap {
+    val map = Arguments.createMap()
+    map.putBoolean("success", success)
+    map.putString("code", code)
+    map.putString("message", message)
+    if (bytesB64 != null) {
+      map.putString("bytesB64", bytesB64)
+    }
+    return map
+  }
+
   private fun closeOnUiThread(promise: Promise) {
     val removed = removeOverlay()
     if (removed) {

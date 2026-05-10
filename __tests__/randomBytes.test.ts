@@ -2,13 +2,30 @@
 /**
  * Tests for src/crypto/randomBytes. Pins:
  *   1. Length validation (positive integer required).
- *   2. WebCrypto path: when globalThis.crypto.getRandomValues exists,
- *      we use it.
- *   3. Fallback path: when WebCrypto is absent, output is unique per
- *      call within a process; warns once.
+ *   2. Sync WebCrypto path: when globalThis.crypto.getRandomValues
+ *      exists, we use it.
+ *   3. Sync fallback path: when WebCrypto is absent, output is unique
+ *      per call within a process; warns once.
  *   4. Output length always matches request.
+ *   5. Async path: prefers native bridge when present; falls through
+ *      to the sync chain when native returns failure or wrong length.
  */
-import {randomBytes, __testing__} from '../src/crypto/randomBytes';
+const mockCryptoRandomBytes = jest.fn<
+  Promise<{success: boolean; code: string; message: string; bytesB64?: string}>,
+  [number]
+>();
+jest.mock('../src/native/CopilotOverlay', () => ({
+  __esModule: true,
+  default: {
+    cryptoRandomBytes: (n: number) => mockCryptoRandomBytes(n),
+  },
+}));
+
+import {
+  randomBytes,
+  randomBytesSync,
+  __testing__,
+} from '../src/crypto/randomBytes';
 
 const originalCrypto = (globalThis as {crypto?: unknown}).crypto;
 
@@ -22,6 +39,13 @@ const setCrypto = (impl: unknown): void => {
 
 beforeEach(() => {
   __testing__.resetWarnedFlag();
+  mockCryptoRandomBytes.mockReset();
+  // Default: native bridge fails so the sync chain runs in async path tests.
+  mockCryptoRandomBytes.mockResolvedValue({
+    success: false,
+    code: 'MODULE_MISSING',
+    message: 'mock',
+  });
 });
 
 afterEach(() => {
@@ -29,19 +53,19 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-describe('randomBytes — input validation', () => {
+describe('randomBytesSync — input validation', () => {
   it.each([0, -1, 1.5, NaN])('rejects non-positive-integer length %p', (n) => {
-    expect(() => randomBytes(n as number)).toThrow(/positive integer/);
+    expect(() => randomBytesSync(n as number)).toThrow(/positive integer/);
   });
 
   it('returns a Uint8Array of the requested length', () => {
-    const out = randomBytes(12);
+    const out = randomBytesSync(12);
     expect(out).toBeInstanceOf(Uint8Array);
     expect(out.length).toBe(12);
   });
 });
 
-describe('randomBytes — WebCrypto path', () => {
+describe('randomBytesSync — WebCrypto path', () => {
   it('delegates to globalThis.crypto.getRandomValues when available', () => {
     const spy = jest.fn((buf: Uint8Array) => {
       for (let i = 0; i < buf.length; i++) {
@@ -50,7 +74,7 @@ describe('randomBytes — WebCrypto path', () => {
       return buf;
     });
     setCrypto({getRandomValues: spy});
-    const out = randomBytes(16);
+    const out = randomBytesSync(16);
     expect(spy).toHaveBeenCalledTimes(1);
     expect(out[0]).toBe(0);
     expect(out[1]).toBe(7);
@@ -60,21 +84,21 @@ describe('randomBytes — WebCrypto path', () => {
   it('chunks WebCrypto calls under the 65_536-byte quota', () => {
     const spy = jest.fn((buf: Uint8Array) => buf);
     setCrypto({getRandomValues: spy});
-    randomBytes(70_000);
+    randomBytesSync(70_000);
     // 70_000 = 65_536 + 4_464 → two calls.
     expect(spy).toHaveBeenCalledTimes(2);
   });
 });
 
-describe('randomBytes — fallback path', () => {
+describe('randomBytesSync — fallback path', () => {
   beforeEach(() => {
     setCrypto(undefined);
   });
 
   it('emits a one-time warning when WebCrypto is absent', () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    randomBytes(16);
-    randomBytes(16);
+    randomBytesSync(16);
+    randomBytesSync(16);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toMatch(/crypto.getRandomValues is unavailable/);
   });
@@ -83,7 +107,7 @@ describe('randomBytes — fallback path', () => {
     jest.spyOn(console, 'warn').mockImplementation(() => {});
     const seen = new Set<string>();
     for (let i = 0; i < 64; i++) {
-      const out = randomBytes(16);
+      const out = randomBytesSync(16);
       seen.add(Buffer.from(out).toString('hex'));
     }
     expect(seen.size).toBe(64);
@@ -91,16 +115,74 @@ describe('randomBytes — fallback path', () => {
 
   it('produces output of any length, including non-block-aligned', () => {
     jest.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(randomBytes(1).length).toBe(1);
-    expect(randomBytes(7).length).toBe(7);
-    expect(randomBytes(20).length).toBe(20);
-    expect(randomBytes(33).length).toBe(33);
+    expect(randomBytesSync(1).length).toBe(1);
+    expect(randomBytesSync(7).length).toBe(7);
+    expect(randomBytesSync(20).length).toBe(20);
+    expect(randomBytesSync(33).length).toBe(33);
   });
 
   it('rejects malformed crypto object (subtle present, getRandomValues missing)', () => {
     jest.spyOn(console, 'warn').mockImplementation(() => {});
     setCrypto({subtle: {}});
-    const out = randomBytes(16);
+    const out = randomBytesSync(16);
     expect(out.length).toBe(16);
+  });
+});
+
+describe('randomBytes (async) — native bridge', () => {
+  it('returns native bytes on success', async () => {
+    // Native returns 4 bytes: [1,2,3,4] → base64 'AQIDBA=='
+    mockCryptoRandomBytes.mockResolvedValueOnce({
+      success: true,
+      code: 'OK',
+      message: '',
+      bytesB64: 'AQIDBA==',
+    });
+    const out = await randomBytes(4);
+    expect(Array.from(out)).toEqual([1, 2, 3, 4]);
+    expect(mockCryptoRandomBytes).toHaveBeenCalledWith(4);
+  });
+
+  it('falls through to the sync chain when native fails', async () => {
+    setCrypto({
+      getRandomValues: (buf: Uint8Array) => {
+        for (let i = 0; i < buf.length; i++) {
+          buf[i] = 42;
+        }
+        return buf;
+      },
+    });
+    mockCryptoRandomBytes.mockResolvedValueOnce({
+      success: false,
+      code: 'RANDOM_FAILED',
+      message: 'mock',
+    });
+    const out = await randomBytes(8);
+    expect(out.length).toBe(8);
+    expect(out[0]).toBe(42);
+  });
+
+  it('falls through when native returns a wrong-length payload', async () => {
+    setCrypto({
+      getRandomValues: (buf: Uint8Array) => {
+        for (let i = 0; i < buf.length; i++) {
+          buf[i] = 9;
+        }
+        return buf;
+      },
+    });
+    mockCryptoRandomBytes.mockResolvedValueOnce({
+      success: true,
+      code: 'OK',
+      message: '',
+      bytesB64: 'AQIDBA==', // 4 bytes
+    });
+    const out = await randomBytes(8); // asks for 8 — mismatch
+    expect(out.length).toBe(8);
+    expect(out[0]).toBe(9);
+  });
+
+  it('validates length the same as the sync path', async () => {
+    await expect(randomBytes(0)).rejects.toThrow(/positive integer/);
   });
 });

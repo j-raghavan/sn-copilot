@@ -40,6 +40,12 @@ jest.mock('../src/native/CopilotOverlay', () => ({
     close: jest.fn(async () => ({success: true, code: 'OK', message: ''})),
     copyToClipboard: jest.fn(async () => ({success: true, code: 'OK', message: ''})),
     writeFileBase64: (path: string, b64: string) => mockWriteFileBase64(path, b64),
+    cryptoPbkdf2Sha256: jest.fn(async () => ({
+      success: false, code: 'MODULE_MISSING', message: 'mock',
+    })),
+    cryptoRandomBytes: jest.fn(async () => ({
+      success: false, code: 'MODULE_MISSING', message: 'mock',
+    })),
   },
 }));
 

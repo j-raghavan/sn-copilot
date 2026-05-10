@@ -22,7 +22,7 @@ import {
   deriveKey,
 } from '../src/crypto/kdf';
 import {encrypt} from '../src/crypto/aesGcm';
-import {randomBytes} from '../src/crypto/randomBytes';
+import {randomBytesSync as randomBytes} from '../src/crypto/randomBytes';
 import {createInMemoryFileIo} from './helpers/inMemoryFileIo';
 import type {KeyFile} from '../src/types';
 

@@ -27,6 +27,12 @@ jest.mock('../src/native/CopilotOverlay', () => ({
       code: 'OK',
       message: 'fixture',
     })),
+    cryptoPbkdf2Sha256: jest.fn(async () => ({
+      success: false, code: 'MODULE_MISSING', message: 'mock',
+    })),
+    cryptoRandomBytes: jest.fn(async () => ({
+      success: false, code: 'MODULE_MISSING', message: 'mock',
+    })),
   },
 }));
 
