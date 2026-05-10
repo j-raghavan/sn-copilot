@@ -424,13 +424,13 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         })}
       </View>
 
-      {/* Privacy caution. The page screenshot + transcribed text
-          go to the configured LLM provider verbatim — there's no
-          on-device redaction. Be deliberate about what's on the
-          page before tapping a quick action. */}
+      {/* Privacy caution — matches README: vision providers send the
+          screenshot as-is; DeepSeek is text-only so outbound text is
+          scrubbed (emails, 7+ digit runs). No per-message toggle. */}
       <Text testID="chat-privacy-note" style={styles.privacyNote}>
-        {'🛡️'} Avoid sharing sensitive info; the visible page is
-        sent to the LLM.
+        {'🛡️'} Avoid sharing sensitive info; the visible page is sent to
+        your provider. Vision models receive the image; DeepSeek scrubs
+        emails and long digits from text only.
       </Text>
 
       <View style={styles.divider} />
