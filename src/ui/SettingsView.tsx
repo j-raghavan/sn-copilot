@@ -23,7 +23,12 @@ import {resolveActiveProvider} from '../storage/activeProvider';
 import {createProviderClient} from '../providers';
 import {buildWiringBundle, type WiringBundle} from '../storage/wiring';
 import {useCopilotState} from '../storage/useCopilotState';
-import {setEncryptionMode, setIdleTimeoutMin} from '../storage/prefs';
+import {
+  setCustomActions,
+  setCustomSystemPrompt,
+  setEncryptionMode,
+  setIdleTimeoutMin,
+} from '../storage/prefs';
 import * as idleTimer from '../storage/idleTimer';
 import {
   changePin,
@@ -34,9 +39,16 @@ import {
 } from '../storage/secureFlows';
 import {getActiveKeys} from '../storage/sessionKey';
 import {encodeUtf8} from '../sdk/utf8';
-import type {KeyFile, ProviderId, ProviderResolution} from '../types';
+import type {
+  CustomAction,
+  KeyFile,
+  ProviderId,
+  ProviderResolution,
+} from '../types';
+import CustomActionsSettings from './CustomActionsSettings';
 import EncryptionSettings from './EncryptionSettings';
 import MigrationPrompt from './MigrationPrompt';
+import PersonaSettings from './PersonaSettings';
 import PinSetup from './PinSetup';
 import SetupChecklist from './SetupChecklist';
 
@@ -347,6 +359,22 @@ function SettingsViewBody(props: {
     [bundle.prefsDeps, refresh],
   );
 
+  const onSavePersona = useCallback(
+    async (next: string | null) => {
+      await setCustomSystemPrompt(bundle.prefsDeps, next);
+      await refresh();
+    },
+    [bundle.prefsDeps, refresh],
+  );
+
+  const onSaveCustomActions = useCallback(
+    async (next: CustomAction[]) => {
+      await setCustomActions(bundle.prefsDeps, next);
+      await refresh();
+    },
+    [bundle.prefsDeps, refresh],
+  );
+
   // Sub-flow renders take over the entire view.
   if (subFlow.kind === 'pin-setup') {
     return (
@@ -473,6 +501,16 @@ function SettingsViewBody(props: {
           onIdleTimeoutChange={onIdleTimeoutChange}
         />
       ) : null}
+
+      <PersonaSettings
+        current={prefs.customSystemPrompt}
+        onSave={onSavePersona}
+      />
+
+      <CustomActionsSettings
+        current={prefs.customActions}
+        onSave={onSaveCustomActions}
+      />
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Privacy</Text>

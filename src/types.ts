@@ -61,6 +61,39 @@ export type CopilotPrefs = {
   // Minutes of inactivity before the in-memory derived key is wiped.
   // Only meaningful when encryptionMode === 'encrypted'.
   idleTimeoutMin: number;
+  // P2: optional global persona override. When non-empty (after
+  // trim), ChatView sends this verbatim to the model in place of
+  // src/ui/systemPrompt.ts's SYSTEM_PROMPT. The user is responsible
+  // for keeping their override useful — we don't merge or post-fix
+  // the default rules onto custom prompts.
+  customSystemPrompt?: string;
+  // P2: user-defined quick-action templates appended to the 4 built-
+  // ins (Summary / Explain / Clarify / Snapshot). Capped to
+  // CUSTOM_ACTION_LIMIT to keep the action row manageable.
+  customActions?: CustomAction[];
+};
+
+// =====================================================================
+// Custom quick actions (Req 3b — saveable named prompt templates).
+// =====================================================================
+//
+// Each user-defined action is one tappable button in the chat header
+// that sends a canned prompt — identical mechanics to the 4 built-ins.
+// Constraints are tight: small label fits the narrow e-ink action
+// row, single glyph for the icon, prompt long enough for a sentence
+// or two of instruction.
+
+export const CUSTOM_ACTION_LIMIT = 6;
+export const CUSTOM_ACTION_LABEL_MAX = 16;
+export const CUSTOM_ACTION_ICON_MAX = 4;
+export const CUSTOM_ACTION_PROMPT_MAX = 500;
+export const CUSTOM_SYSTEM_PROMPT_MAX = 2000;
+
+export type CustomAction = {
+  id: string;
+  label: string;
+  icon: string;
+  prompt: string;
 };
 
 export const DEFAULT_IDLE_TIMEOUT_MIN = 10;

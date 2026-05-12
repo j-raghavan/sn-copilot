@@ -127,7 +127,7 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
     }),
     [bundle],
   );
-  const {state, refresh} = useCopilotState(stateDeps);
+  const {state, prefs, refresh} = useCopilotState(stateDeps);
 
   const onUnlockAttempt = useCallback(
     async (secret: string) => {
@@ -190,6 +190,8 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
       provider={providerLabel}
       keyFile={activeKeyFile}
       conversationsDeps={bundle.conversationsDeps}
+      customSystemPrompt={prefs.customSystemPrompt}
+      customActions={prefs.customActions}
       onSettingsTap={() => setView('settings')}
       onClose={closeOverlay}
     />

@@ -27,7 +27,7 @@
  * always sent verbatim. On DeepSeek (text-only) the outbound text
  * has emails and 7+ digit runs scrubbed automatically.
  */
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   Image,
   ScrollView,
@@ -48,6 +48,7 @@ import {
   isImageCapableProvider,
   type Conversation,
   type ConversationMessage,
+  type CustomAction,
   type KeyFile,
 } from '../types';
 import {
@@ -97,6 +98,13 @@ export type ChatViewProps = {
   // mount and saves after every turn. Omitting it (older tests,
   // pre-bundle render in CopilotPanel) keeps the chat in-memory.
   conversationsDeps?: ConversationsDeps;
+  // P2: optional global persona override. Non-empty values replace
+  // the built-in SYSTEM_PROMPT verbatim — caller is responsible for
+  // whatever steering they want.
+  customSystemPrompt?: string;
+  // P2: user-defined quick actions appended to the 4 built-ins. The
+  // row horizontally scrolls when the combined width overflows.
+  customActions?: CustomAction[];
   onSettingsTap: () => void;
   onClose: () => void;
 };
@@ -186,6 +194,8 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     provider,
     keyFile,
     conversationsDeps,
+    customSystemPrompt,
+    customActions,
     onSettingsTap,
     onClose,
   } = props;
@@ -197,6 +207,38 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   // fakeProvider, which returns canned demo replies that LOOK like
   // real model output and send users on a wild goose chase.
   const hasKeyFile = keyFile !== undefined;
+
+  // Effective system prompt: prefer the user's persona override
+  // when it's a non-empty string, otherwise fall back to the
+  // built-in SYSTEM_PROMPT. Trimmed comparison so a whitespace-only
+  // override doesn't accidentally wipe the default rules.
+  const effectiveSystemPrompt =
+    customSystemPrompt !== undefined && customSystemPrompt.trim().length > 0
+      ? customSystemPrompt
+      : SYSTEM_PROMPT;
+
+  // Merge built-ins with user-defined actions. Built-ins always come
+  // first so familiar buttons don't migrate as the user adds custom
+  // ones. The user's button row horizontally scrolls when the
+  // combined width overflows.
+  const mergedActions = useMemo(() => {
+    if (customActions === undefined || customActions.length === 0) {
+      return QUICK_ACTIONS.map((a) => ({
+        ...a,
+        kind: 'builtin' as const,
+      }));
+    }
+    return [
+      ...QUICK_ACTIONS.map((a) => ({...a, kind: 'builtin' as const})),
+      ...customActions.map((a) => ({
+        id: a.id,
+        label: a.label,
+        icon: a.icon,
+        prompt: a.prompt,
+        kind: 'custom' as const,
+      })),
+    ];
+  }, [customActions]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState<string>('');
@@ -355,7 +397,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       );
       const r = await client.send(
         {
-          systemPrompt: SYSTEM_PROMPT,
+          systemPrompt: effectiveSystemPrompt,
           userText,
           imageBase64,
           maxTokens: 256,
@@ -407,18 +449,24 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       release();
       setBusy(false);
     }
-  }, [apiKey, client, keyFile, model, persistTurn]);
+  }, [apiKey, client, effectiveSystemPrompt, keyFile, model, persistTurn]);
 
-  const onQuickActionTap = useCallback(
-    (action: QuickActionId) => {
+  // Single dispatch for any action button (built-in OR user-defined).
+  // The id is opaque here — we look up the prompt from the merged
+  // list. Built-in ids are the closed `QuickActionId` union; custom
+  // ids are arbitrary strings minted at save time in Settings.
+  const onActionTap = useCallback(
+    (actionId: string) => {
       if (!hasKeyFile) {
         return;
       }
-      // QuickActionId is a closed union — the find always matches.
-      const def = QUICK_ACTIONS.find(a => a.id === action) as (typeof QUICK_ACTIONS)[number];
+      const def = mergedActions.find((a) => a.id === actionId);
+      if (def === undefined) {
+        return;
+      }
       sendUserMessage(def.prompt);
     },
-    [hasKeyFile, sendUserMessage],
+    [hasKeyFile, mergedActions, sendUserMessage],
   );
 
   const onSendInput = useCallback(() => {
@@ -597,31 +645,65 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         </View>
       </View>
 
-      {/* Quick action row — explicit gap via `gap` style; each button
-          flex-shrinks gracefully on narrower devices. Disabled when
-          no key file is configured so the user can't tap into the
-          fakeProvider canned-response trap. */}
-      <View style={styles.quickActionRow}>
-        {QUICK_ACTIONS.map(a => {
-          const disabled = busy || !hasKeyFile;
-          return (
-            <TouchableOpacity
-              key={a.id}
-              testID={`chat-action-${a.id}`}
-              accessibilityLabel={a.label}
-              onPress={() => onQuickActionTap(a.id)}
-              disabled={disabled}
-              style={[styles.quickActionBtn, disabled && styles.btnDisabled]}>
-              <Text style={styles.quickActionIcon} numberOfLines={1}>
-                {a.icon}
-              </Text>
-              <Text style={styles.quickActionLabel} numberOfLines={1}>
-                {a.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      {/* Quick action row — built-ins flex to share the row width
+          when no custom actions are configured. Once the user adds
+          custom actions the row switches to a horizontal scroll so
+          the buttons keep a readable width instead of getting
+          squeezed. Disabled when no key file is configured so the
+          user can't tap into the fakeProvider canned-response trap. */}
+      {customActions !== undefined && customActions.length > 0 ? (
+        <ScrollView
+          testID="chat-action-row"
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.quickActionRowScroll}>
+          {mergedActions.map((a) => {
+            const disabled = busy || !hasKeyFile;
+            return (
+              <TouchableOpacity
+                key={a.id}
+                testID={`chat-action-${a.id}`}
+                accessibilityLabel={a.label}
+                onPress={() => onActionTap(a.id)}
+                disabled={disabled}
+                style={[
+                  styles.quickActionBtn,
+                  styles.quickActionBtnFixed,
+                  disabled && styles.btnDisabled,
+                ]}>
+                <Text style={styles.quickActionIcon} numberOfLines={1}>
+                  {a.icon}
+                </Text>
+                <Text style={styles.quickActionLabel} numberOfLines={1}>
+                  {a.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      ) : (
+        <View testID="chat-action-row" style={styles.quickActionRow}>
+          {mergedActions.map((a) => {
+            const disabled = busy || !hasKeyFile;
+            return (
+              <TouchableOpacity
+                key={a.id}
+                testID={`chat-action-${a.id}`}
+                accessibilityLabel={a.label}
+                onPress={() => onActionTap(a.id)}
+                disabled={disabled}
+                style={[styles.quickActionBtn, disabled && styles.btnDisabled]}>
+                <Text style={styles.quickActionIcon} numberOfLines={1}>
+                  {a.icon}
+                </Text>
+                <Text style={styles.quickActionLabel} numberOfLines={1}>
+                  {a.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
 
       {/* Privacy caution — matches README: vision providers send the
           screenshot as-is; DeepSeek is text-only so outbound text is
@@ -942,6 +1024,13 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     gap: 6,
   },
+  quickActionRowScroll: {
+    marginTop: 4,
+    marginBottom: 6,
+    gap: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   quickActionBtn: {
     flex: 1,
     flexDirection: 'row',
@@ -952,6 +1041,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#000000',
     borderRadius: 8,
+  },
+  // Fixed-width variant used in the horizontal-scroll row so each
+  // button keeps a readable size regardless of how many actions the
+  // user has saved.
+  quickActionBtnFixed: {
+    flex: 0,
+    minWidth: 110,
   },
   quickActionIcon: {
     fontSize: 15,
