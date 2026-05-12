@@ -79,7 +79,8 @@ export default function CopilotPanel(
   }, []);
 
   // While the wiring bundle resolves (one host call) render today's
-  // chat fallback so first paint isn't a spinner.
+  // chat fallback so first paint isn't a spinner. No persistence
+  // wiring yet — conversationsDeps comes from the bundle.
   if (bundle === null) {
     return (
       <ChatView
@@ -188,6 +189,7 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
       scopeLabel={initialScopeLabel}
       provider={providerLabel}
       keyFile={activeKeyFile}
+      conversationsDeps={bundle.conversationsDeps}
       onSettingsTap={() => setView('settings')}
       onClose={closeOverlay}
     />

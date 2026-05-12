@@ -6,6 +6,7 @@
  *   4. Trailing slash on probe result is normalized.
  */
 import {
+  CONVERSATIONS_FILENAME,
   PREFS_FILENAME,
   VAULT_FILENAME,
   resolveVaultPaths,
@@ -13,16 +14,22 @@ import {
 import {DEFAULT_KEY_ROOT} from '../src/storage/keyFiles';
 
 describe('resolveVaultPaths — host returns a path', () => {
-  it('places vault + prefs inside the host-supplied dir', async () => {
+  it('places vault + prefs + conversations inside the host-supplied dir', async () => {
     const r = await resolveVaultPaths(async () => '/data/data/host/plugins/abc');
     expect(r.baseDir).toBe('/data/data/host/plugins/abc');
     expect(r.vaultPath).toBe(`/data/data/host/plugins/abc/${VAULT_FILENAME}`);
     expect(r.prefsPath).toBe(`/data/data/host/plugins/abc/${PREFS_FILENAME}`);
+    expect(r.conversationsPath).toBe(
+      `/data/data/host/plugins/abc/${CONVERSATIONS_FILENAME}`,
+    );
   });
 
   it('strips a single trailing slash', async () => {
     const r = await resolveVaultPaths(async () => '/data/plugins/abc/');
     expect(r.vaultPath).toBe(`/data/plugins/abc/${VAULT_FILENAME}`);
+    expect(r.conversationsPath).toBe(
+      `/data/plugins/abc/${CONVERSATIONS_FILENAME}`,
+    );
   });
 });
 
@@ -34,6 +41,9 @@ describe('resolveVaultPaths — host returns nothing', () => {
       expect(r.baseDir).toBeNull();
       expect(r.vaultPath).toBe(`${DEFAULT_KEY_ROOT}/.copilot-key.enc`);
       expect(r.prefsPath).toBe(`${DEFAULT_KEY_ROOT}/.copilot-prefs.json`);
+      expect(r.conversationsPath).toBe(
+        `${DEFAULT_KEY_ROOT}/.copilot-conversations.json`,
+      );
     },
   );
 
@@ -43,6 +53,9 @@ describe('resolveVaultPaths — host returns nothing', () => {
     });
     expect(r.baseDir).toBeNull();
     expect(r.vaultPath).toBe(`${DEFAULT_KEY_ROOT}/.copilot-key.enc`);
+    expect(r.conversationsPath).toBe(
+      `${DEFAULT_KEY_ROOT}/.copilot-conversations.json`,
+    );
   });
 
   it('falls back when probe returns a non-string', async () => {

@@ -70,3 +70,71 @@ export const DEFAULT_PREFS: Readonly<CopilotPrefs> = Object.freeze({
   encryptionMode: 'undecided' as const,
   idleTimeoutMin: DEFAULT_IDLE_TIMEOUT_MIN,
 });
+
+// =====================================================================
+// Conversation history (Req 1+2 — last-5 FIFO retention).
+// =====================================================================
+//
+// A Conversation is the unit of FIFO eviction. The user starts a new
+// one explicitly via the "New chat" button (manual boundary — never
+// auto-segmented by page or time). The on-disk store caps to
+// CONVERSATION_HISTORY_LIMIT and evicts oldest-first by updatedAt.
+
+export const CONVERSATION_SCHEMA_VERSION = 1 as const;
+export const CONVERSATION_HISTORY_LIMIT = 5;
+export const CONVERSATION_PREVIEW_MAX_CHARS = 80;
+
+export type ConversationMessageRole = 'user' | 'assistant';
+
+export type ConversationMessage = {
+  id: string;
+  role: ConversationMessageRole;
+  text: string;
+  // Assistant-only metadata. Optional on the type so the same shape
+  // covers both roles without a tagged union ceremony — the message
+  // bubble in ChatView still discriminates on role.
+  modelId?: string;
+  latencyMs?: number;
+  // Unix ms. Drives the history list sort and the preview banner.
+  createdAt: number;
+};
+
+export type Conversation = {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  // The provider that handled the first send — informational only,
+  // shown in the history list. The conversation is not locked to it;
+  // the user can swap providers in Settings mid-chat.
+  providerId?: ProviderId;
+  messages: ConversationMessage[];
+};
+
+// On-disk envelope (when plaintext). Encrypted form goes through the
+// same aesGcm envelope used by vault.ts. See storage/conversations.ts
+// for the auto-detect-and-route read logic.
+export type ConversationStore = {
+  version: typeof CONVERSATION_SCHEMA_VERSION;
+  conversations: Conversation[];
+};
+
+export const EMPTY_CONVERSATION_STORE: Readonly<ConversationStore> =
+  Object.freeze({
+    version: CONVERSATION_SCHEMA_VERSION,
+    conversations: [],
+  });
+
+// Derive the preview line shown in the history list from the first
+// user message of a conversation. Empty when the conversation has no
+// user message yet (e.g., a new chat the user hasn't sent into).
+export const conversationPreview = (conv: Conversation): string => {
+  const firstUser = conv.messages.find(m => m.role === 'user');
+  if (firstUser === undefined) {
+    return '';
+  }
+  const trimmed = firstUser.text.trim();
+  if (trimmed.length <= CONVERSATION_PREVIEW_MAX_CHARS) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, CONVERSATION_PREVIEW_MAX_CHARS - 1)}…`;
+};

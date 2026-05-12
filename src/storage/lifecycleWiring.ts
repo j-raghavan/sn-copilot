@@ -15,6 +15,7 @@
 import {PluginManager} from 'sn-plugin-lib';
 import {DEFAULT_IDLE_TIMEOUT_MIN} from '../types';
 import {clear as clearSessionKey, subscribe} from './sessionKey';
+import {clearDerivedKey} from './derivedKey';
 import * as idleTimer from './idleTimer';
 import {readPrefs, type PrefsDeps} from './prefs';
 
@@ -37,6 +38,7 @@ export const installSecureLifecycle = (deps: LifecycleDeps): void => {
       onStop: () => {
         idleTimer.stop();
         clearSessionKey();
+        clearDerivedKey();
       },
     });
   } catch (e) {
@@ -63,6 +65,7 @@ export const installSecureLifecycle = (deps: LifecycleDeps): void => {
         minutes: prefs.idleTimeoutMin,
         onExpire: () => {
           clearSessionKey();
+          clearDerivedKey();
         },
       });
     })();

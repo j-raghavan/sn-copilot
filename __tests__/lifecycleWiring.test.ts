@@ -32,6 +32,11 @@ import {
   clear as clearSessionKey,
   setActiveKeys,
 } from '../src/storage/sessionKey';
+import {
+  __testing__ as derivedKeyTesting,
+  hasDerivedKey,
+  setDerivedKey,
+} from '../src/storage/derivedKey';
 import {__testing__ as idleTesting, isRunning} from '../src/storage/idleTimer';
 import {writePrefs} from '../src/storage/prefs';
 import {createInMemoryFileIo} from './helpers/inMemoryFileIo';
@@ -59,6 +64,7 @@ beforeEach(() => {
   lifeListeners.length = 0;
   mockAddPluginLifeListener.mockClear();
   sessionTesting.reset();
+  derivedKeyTesting.reset();
   idleTesting.reset();
   lifecycleTesting.reset();
 });
@@ -137,6 +143,29 @@ describe('installSecureLifecycle', () => {
     installSecureLifecycle(deps);
     // onStart shouldn't throw and shouldn't change session state.
     expect(() => lifeListeners[0].onStart()).not.toThrow();
+  });
+
+  it('onStop wipes the derived AES key alongside sessionKey', async () => {
+    const deps = await setupDeps();
+    installSecureLifecycle(deps);
+    setActiveKeys([f()]);
+    setDerivedKey(new Uint8Array(32).fill(7));
+    await flushPromises();
+    expect(hasDerivedKey()).toBe(true);
+    lifeListeners[0].onStop();
+    expect(hasDerivedKey()).toBe(false);
+  });
+
+  it('idle expiry wipes the derived AES key alongside sessionKey', async () => {
+    const deps = await setupDeps(1);
+    installSecureLifecycle(deps);
+    setActiveKeys([f()]);
+    setDerivedKey(new Uint8Array(32).fill(7));
+    await flushPromises();
+    expect(hasDerivedKey()).toBe(true);
+    jest.advanceTimersByTime(60 * 1000 + 1);
+    await flushPromises();
+    expect(hasDerivedKey()).toBe(false);
   });
 
   it('falls back to defaults when readPrefs throws on unlock', async () => {

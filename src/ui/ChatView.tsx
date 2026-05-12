@@ -27,7 +27,7 @@
  * always sent verbatim. On DeepSeek (text-only) the outbound text
  * has emails and 7+ digit runs scrubbed automatically.
  */
-import React, {useCallback, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   Image,
   ScrollView,
@@ -43,7 +43,20 @@ import {debugLog, infoLog} from '../diagnostics/log';
 import {redactPii} from '../privacy/redact';
 import {tryAcquire, release} from '../reentrancy/inFlightGuard';
 import {getPageContext} from '../scope/pageContext';
-import {isImageCapableProvider, type KeyFile} from '../types';
+import {
+  conversationPreview,
+  isImageCapableProvider,
+  type Conversation,
+  type ConversationMessage,
+  type KeyFile,
+} from '../types';
+import {
+  loadConversations,
+  newConversationId,
+  newMessageId,
+  saveConversation,
+  type ConversationsDeps,
+} from '../storage/conversations';
 import {composeUserText} from './composePrompt';
 import {buildMarkdownStyles} from './markdownStyles';
 import {markdownToPlainText} from './markdownToPlain';
@@ -79,6 +92,11 @@ export type ChatViewProps = {
   // file configured), ChatView falls back to fakeProvider so the
   // demo still runs offline.
   keyFile?: KeyFile;
+  // Optional persistence wiring. When present AND a keyFile is
+  // configured, ChatView loads the most-recent conversation on
+  // mount and saves after every turn. Omitting it (older tests,
+  // pre-bundle render in CopilotPanel) keeps the chat in-memory.
+  conversationsDeps?: ConversationsDeps;
   onSettingsTap: () => void;
   onClose: () => void;
 };
@@ -93,6 +111,57 @@ type ChatMessage =
       latencyMs?: number;
     }
   | {id: string; role: 'thinking'};
+
+// Maps a persisted ConversationMessage back into the on-screen
+// ChatMessage union. Drops nothing: assistant metadata comes through.
+const toChatMessages = (msgs: ConversationMessage[]): ChatMessage[] =>
+  msgs.map((m) =>
+    m.role === 'user'
+      ? {id: m.id, role: 'user', text: m.text}
+      : {
+          id: m.id,
+          role: 'assistant',
+          text: m.text,
+          modelId: m.modelId,
+          latencyMs: m.latencyMs,
+        },
+  );
+
+// Reverse direction — only persists the two real roles ('user',
+// 'assistant'), drops the transient 'thinking' placeholder. Adds
+// createdAt at persistence time (we don't track per-message wall
+// clocks in the live ChatMessage union, but the persisted form
+// stamps them for history ordering).
+const toConversationMessages = (
+  msgs: ChatMessage[],
+): ConversationMessage[] => {
+  const out: ConversationMessage[] = [];
+  let now = Date.now();
+  for (const m of msgs) {
+    if (m.role === 'thinking') {
+      continue;
+    }
+    if (m.role === 'user') {
+      out.push({id: m.id, role: 'user', text: m.text, createdAt: now});
+    } else {
+      out.push({
+        id: m.id,
+        role: 'assistant',
+        text: m.text,
+        modelId: m.modelId,
+        latencyMs: m.latencyMs,
+        createdAt: now,
+      });
+    }
+    // Monotonically nudge so the ordering of stamps follows the
+    // order of messages in the array. Real wall-clock precision
+    // isn't needed; the assistant message coming "after" the user
+    // message is what matters for sort stability if anything else
+    // later groups by createdAt.
+    now += 1;
+  }
+  return out;
+};
 
 // Quick-action button definitions: id, label, icon, and the canned
 // prompt that appears as a user message when tapped.
@@ -116,6 +185,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     scopeLabel,
     provider,
     keyFile,
+    conversationsDeps,
     onSettingsTap,
     onClose,
   } = props;
@@ -138,6 +208,16 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     msgId: string;
     state: 'copied' | 'failed';
   } | null>(null);
+  // Conversation persistence state (Req 1+2). When conversationsDeps
+  // is undefined (no wiring bundle yet, or no keyFile) the persistence
+  // path is dormant — `currentConversationId` stays null and writes
+  // are skipped.
+  const [currentConversationId, setCurrentConversationId] = useState<
+    string | null
+  >(null);
+  const [history, setHistory] = useState<Conversation[]>([]);
+  const [showHistory, setShowHistory] = useState<boolean>(false);
+  const conversationCreatedAtRef = useRef<number | null>(null);
   const fontScale = FONT_SCALE[fontSize];
   const canShrink = fontSize !== 'S';
   const canGrow = fontSize !== 'L';
@@ -147,10 +227,87 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   // message — we wait for the assistant message specifically.
   const hasAssistantReply = messages.some(m => m.role === 'assistant');
 
-  // Monotonically increasing message id — sufficient for our single-
-  // session chat. Avoids a uuid dep.
+  // Per-mount monotonic counter folded into a timestamp-based id so
+  // resumed conversations and freshly-minted messages share a
+  // globally-unique namespace.
   const nextIdRef = useRef<number>(1);
-  const newId = () => `m${nextIdRef.current++}`;
+  const newId = () => `${newMessageId()}_${nextIdRef.current++}`;
+
+  // On mount: restore the most-recent conversation if we have wiring
+  // + a key file. New chats inherit a fresh id only at first send.
+  useEffect(() => {
+    if (conversationsDeps === undefined || !hasKeyFile) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await loadConversations(conversationsDeps);
+        if (cancelled) {
+          return;
+        }
+        setHistory(list);
+        if (list.length > 0) {
+          const newest = list[0];
+          setMessages(toChatMessages(newest.messages));
+          setCurrentConversationId(newest.id);
+          conversationCreatedAtRef.current = newest.createdAt;
+        }
+      } catch (e) {
+        // Persistence failures must never block the chat surface.
+        // Log and continue with an empty session.
+        debugLog(
+          `[COPILOT_CHAT] history restore failed: ${(e as Error).message}`,
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationsDeps, hasKeyFile]);
+
+  // Persists the current conversation after a turn completes. No-op
+  // when persistence isn't wired or there's nothing to save. Mints a
+  // conversation id on the FIRST send (so empty "New chat" sessions
+  // never clutter the FIFO history).
+  const persistTurn = useCallback(
+    async (finalMessages: ChatMessage[]): Promise<void> => {
+      if (conversationsDeps === undefined) {
+        return;
+      }
+      const persisted = toConversationMessages(finalMessages);
+      if (persisted.length === 0) {
+        return;
+      }
+      let convId = currentConversationId;
+      let createdAt = conversationCreatedAtRef.current;
+      if (convId === null) {
+        convId = newConversationId();
+        createdAt = Date.now();
+        setCurrentConversationId(convId);
+        conversationCreatedAtRef.current = createdAt;
+      }
+      const updatedAt = Date.now();
+      const conv: Conversation = {
+        id: convId,
+        createdAt: createdAt ?? updatedAt,
+        updatedAt,
+        providerId: keyFile?.provider,
+        messages: persisted,
+      };
+      try {
+        const list = await saveConversation(conversationsDeps, conv);
+        setHistory(list);
+      } catch (e) {
+        // Persistence failures shouldn't surface to the user as a
+        // chat error — the in-memory turn already completed.
+        debugLog(
+          `[COPILOT_CHAT] history save failed: ${(e as Error).message}`,
+        );
+      }
+    },
+    [conversationsDeps, currentConversationId, keyFile?.provider],
+  );
 
   const sendUserMessage = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -210,42 +367,47 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         `[COPILOT_CHAT] response latencyMs=${r.latencyMs} ` +
           `text.length=${r.text.length} model=${r.modelId}`,
       );
+      const assistantMsg: ChatMessage = {
+        id: newId(),
+        role: 'assistant',
+        text: r.text,
+        modelId: r.modelId,
+        latencyMs: r.latencyMs,
+      };
       setMessages(curr => {
         // Replace the trailing thinking placeholder with the AI msg.
         const without = curr.filter(m => m.id !== thinkingMsg.id);
-        return [
-          ...without,
-          {
-            id: newId(),
-            role: 'assistant',
-            text: r.text,
-            modelId: r.modelId,
-            latencyMs: r.latencyMs,
-          },
-        ];
+        const next = [...without, assistantMsg];
+        // Persist on the same tick the UI commits — the closure
+        // captures `next` so concurrent updates can't clobber it.
+        persistTurn(next).catch(() => undefined);
+        return next;
       });
     } catch (err) {
       // Detailed error stays in console for ops; the bubble shows a
       // short summary that doesn't leak HTTP bodies / request ids.
       console.log('[COPILOT_CHAT] sendUserMessage failed', String(err));
       const userVisible = sanitizeProviderError(err);
+      const errorMsg: ChatMessage = {
+        id: newId(),
+        role: 'assistant',
+        text: `Error: ${userVisible}`,
+      };
       setMessages(curr => {
         const without = curr.filter(m => m.id !== thinkingMsg.id);
-        return [
-          ...without,
-          {
-            id: newId(),
-            role: 'assistant',
-            text: `Error: ${userVisible}`,
-          },
-        ];
+        const next = [...without, errorMsg];
+        // Persist the user message even on failure — losing the
+        // user's prompt to a transient network error would be worse
+        // than persisting an "Error: …" bubble alongside it.
+        persistTurn(next).catch(() => undefined);
+        return next;
       });
     } finally {
       clearTimeout(timeoutId);
       release();
       setBusy(false);
     }
-  }, [apiKey, client, keyFile, model]);
+  }, [apiKey, client, keyFile, model, persistTurn]);
 
   const onQuickActionTap = useCallback(
     (action: QuickActionId) => {
@@ -307,14 +469,40 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   );
   const handleLarger = useCallback(() => setFontSize(s => stepUp(s)), []);
 
-  // Wipes the chat history so the user can start fresh on the same
-  // page without closing/reopening the overlay. Keeps font size
-  // (a user pref, not session state).
+  // Wipes the on-screen chat so the user can start fresh on the
+  // same page without closing/reopening the overlay. Keeps font size
+  // (a user pref, not session state). Clears the active conversation
+  // id so the NEXT send mints a fresh entry instead of overwriting
+  // the previous one — the previous conversation stays in the
+  // history list, capped by FIFO.
   const onNewChat = useCallback(() => {
     setMessages([]);
     setInput('');
     setCopyFeedback(null);
+    setCurrentConversationId(null);
+    conversationCreatedAtRef.current = null;
+    setShowHistory(false);
   }, []);
+
+  const onToggleHistory = useCallback(() => {
+    setShowHistory((s) => !s);
+  }, []);
+
+  // Loads a saved conversation into the chat view, replacing whatever
+  // is currently on screen. Doesn't mutate disk — switching is
+  // read-only until the user sends into it, at which point the
+  // existing conversation gets upserted by id.
+  const onSelectConversation = useCallback(
+    (conv: Conversation) => {
+      setMessages(toChatMessages(conv.messages));
+      setCurrentConversationId(conv.id);
+      conversationCreatedAtRef.current = conv.createdAt;
+      setShowHistory(false);
+      setInput('');
+      setCopyFeedback(null);
+    },
+    [],
+  );
 
   return (
     <View testID="chat-view" style={styles.root}>
@@ -372,15 +560,26 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         </View>
       </View>
 
-      {/* Context row: scope label on the left, New-chat + Settings
-          icons on the right. Putting Settings here (instead of the
-          footer) makes it discoverable without scrolling — the cog
-          was hard to spot beneath the input box. */}
+      {/* Context row: scope label on the left, History + New-chat +
+          Settings icons on the right. History (📚) opens the recent-
+          conversations list inline; New-chat (📝) starts a fresh
+          conversation id; Settings (⚙) opens the settings screen.
+          Putting Settings here (instead of the footer) makes it
+          discoverable without scrolling. */}
       <View style={styles.contextRow}>
         <Text testID="chat-context" style={styles.contextLine}>
           Context: {scopeLabel}
         </Text>
         <View style={styles.contextActions}>
+          {history.length > 0 ? (
+            <TouchableOpacity
+              testID="chat-history"
+              accessibilityLabel="Show recent conversations"
+              onPress={onToggleHistory}
+              style={styles.iconBtn}>
+              <Text style={styles.iconBtnText}>📚</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             testID="chat-new"
             accessibilityLabel="Start a new chat"
@@ -435,36 +634,47 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
 
       <View style={styles.divider} />
 
-      {/* Chat scroll. Three states stack here:
-          - no key file → onboarding checklist (blocks quick actions),
-          - key file but no messages yet → idle hint,
-          - key file with messages → bubbles. */}
-      <ScrollView
-        testID="chat-scroll"
-        style={styles.chatScroll}
-        contentContainerStyle={styles.chatContent}>
-        {!hasKeyFile ? (
-          <SetupChecklist
-            testID="chat-setup-checklist"
-            headline="No API key configured. Copilot needs a key file in MyStyle/SnCopilot/ before the quick actions and chat can talk to a real model."
-          />
-        ) : messages.length === 0 ? (
-          <Text testID="chat-empty" style={styles.emptyHint}>
-            Tap a quick action above, or ask a question below.
-          </Text>
-        ) : null}
-        {messages.map(m => (
-          <ChatBubble
-            key={m.id}
-            msg={m}
-            fontScale={fontScale}
-            onCopy={onCopyBubble}
-            copyState={
-              copyFeedback?.msgId === m.id ? copyFeedback.state : 'idle'
-            }
-          />
-        ))}
-      </ScrollView>
+      {/* Chat scroll OR History panel. The history panel replaces the
+          chat scroll when active so the user can pick from the last
+          CONVERSATION_HISTORY_LIMIT (5) conversations. Tapping an
+          item loads it back into the chat; the Close button drops
+          back to the live chat without changing anything. */}
+      {showHistory ? (
+        <HistoryPanel
+          testID="chat-history-panel"
+          history={history}
+          activeId={currentConversationId}
+          onSelect={onSelectConversation}
+          onClose={() => setShowHistory(false)}
+        />
+      ) : (
+        <ScrollView
+          testID="chat-scroll"
+          style={styles.chatScroll}
+          contentContainerStyle={styles.chatContent}>
+          {!hasKeyFile ? (
+            <SetupChecklist
+              testID="chat-setup-checklist"
+              headline="No API key configured. Copilot needs a key file in MyStyle/SnCopilot/ before the quick actions and chat can talk to a real model."
+            />
+          ) : messages.length === 0 ? (
+            <Text testID="chat-empty" style={styles.emptyHint}>
+              Tap a quick action above, or ask a question below.
+            </Text>
+          ) : null}
+          {messages.map(m => (
+            <ChatBubble
+              key={m.id}
+              msg={m}
+              fontScale={fontScale}
+              onCopy={onCopyBubble}
+              copyState={
+                copyFeedback?.msgId === m.id ? copyFeedback.state : 'idle'
+              }
+            />
+          ))}
+        </ScrollView>
+      )}
 
       <View style={styles.divider} />
 
@@ -504,6 +714,68 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   );
 }
 
+
+// Renders the recent-conversations list inline. Tapping an entry
+// hands the conversation back via onSelect (ChatView re-hydrates the
+// scroll); the Close button just collapses the panel.
+function HistoryPanel({
+  testID,
+  history,
+  activeId,
+  onSelect,
+  onClose,
+}: {
+  testID: string;
+  history: Conversation[];
+  activeId: string | null;
+  onSelect: (conv: Conversation) => void;
+  onClose: () => void;
+}): React.JSX.Element {
+  return (
+    <ScrollView
+      testID={testID}
+      style={styles.chatScroll}
+      contentContainerStyle={styles.chatContent}>
+      <View style={styles.historyHeader}>
+        <Text style={styles.historyTitle}>Recent chats</Text>
+        <TouchableOpacity
+          testID={`${testID}-close`}
+          accessibilityLabel="Close history"
+          onPress={onClose}
+          style={styles.iconBtn}>
+          <Text style={styles.iconBtnText}>×</Text>
+        </TouchableOpacity>
+      </View>
+      {history.length === 0 ? (
+        <Text style={styles.emptyHint}>No saved chats yet.</Text>
+      ) : (
+        history.map((c) => {
+          const isActive = c.id === activeId;
+          const preview = conversationPreview(c) || '(empty)';
+          return (
+            <TouchableOpacity
+              key={c.id}
+              testID={`chat-history-item-${c.id}`}
+              accessibilityLabel={`Open conversation ${preview}`}
+              onPress={() => onSelect(c)}
+              style={[
+                styles.historyItem,
+                isActive && styles.historyItemActive,
+              ]}>
+              <Text style={styles.historyItemPreview} numberOfLines={2}>
+                {preview}
+              </Text>
+              <Text style={styles.historyItemMeta}>
+                {c.messages.length} message{c.messages.length === 1 ? '' : 's'}
+                {isActive ? ' · current' : ''}
+              </Text>
+            </TouchableOpacity>
+          );
+        })
+      )}
+    </ScrollView>
+  );
+}
 
 function ChatBubble({
   msg,
@@ -819,5 +1091,37 @@ const styles = StyleSheet.create({
     color: '#000000',
     textAlign: 'center',
     paddingTop: 4,
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  historyTitle: {
+    fontSize: 17,
+    color: '#000000',
+    fontWeight: '600',
+  },
+  historyItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  historyItemActive: {
+    borderStyle: 'dashed',
+  },
+  historyItemPreview: {
+    fontSize: 15,
+    color: '#000000',
+  },
+  historyItemMeta: {
+    fontSize: 13,
+    color: '#000000',
+    fontStyle: 'italic',
+    marginTop: 4,
   },
 });

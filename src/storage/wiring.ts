@@ -9,12 +9,16 @@ import {createBridgeFileIo, type FileIo} from './fileIo';
 import {resolveVaultPaths} from './vaultPath';
 import type {FileUtilsLike} from './keyFiles';
 import type {Logger} from '../sdk/types';
+import type {ConversationsDeps} from './conversations';
+import {getDerivedKey} from './derivedKey';
+import {readPrefs, type PrefsDeps} from './prefs';
 
 export type WiringBundle = {
   io: FileIo;
   vaultDeps: {io: FileIo; vaultPath: string; logger: Logger};
   prefsDeps: {io: FileIo; prefsPath: string; logger: Logger};
   discoveryDeps: {fileUtils: FileUtilsLike; logger: Logger};
+  conversationsDeps: ConversationsDeps;
 };
 
 const consoleLogger: Logger = {
@@ -39,10 +43,19 @@ const buildBridgeIo = (): FileIo =>
 export const buildWiringBundle = async (): Promise<WiringBundle> => {
   const r = await resolveVaultPaths(() => PluginManager.getPluginDirPath());
   const io = buildBridgeIo();
+  const prefsDeps: PrefsDeps = {io, prefsPath: r.prefsPath, logger: consoleLogger};
+  const conversationsDeps: ConversationsDeps = {
+    io,
+    conversationsPath: r.conversationsPath,
+    encryptionMode: async () => (await readPrefs(prefsDeps)).encryptionMode,
+    derivedKey: () => getDerivedKey(),
+    logger: consoleLogger,
+  };
   return {
     io,
     vaultDeps: {io, vaultPath: r.vaultPath, logger: consoleLogger},
-    prefsDeps: {io, prefsPath: r.prefsPath, logger: consoleLogger},
+    prefsDeps,
     discoveryDeps: {fileUtils: fileUtilsLike(), logger: consoleLogger},
+    conversationsDeps,
   };
 };

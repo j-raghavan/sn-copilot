@@ -10,6 +10,7 @@ import type {KeyFile, EncryptionMode} from '../types';
 import {readVault, writeVault, deleteVault, type VaultDeps} from './vault';
 import {setEncryptionMode, type PrefsDeps} from './prefs';
 import {clear as clearSessionKey, setActiveKeys} from './sessionKey';
+import {clearDerivedKey, setDerivedKey} from './derivedKey';
 
 export type Deps = {
   vault: VaultDeps;
@@ -33,9 +34,10 @@ export const encryptInitial = async (
     return {ok: false, reason: 'no key files to encrypt'};
   }
   try {
-    await writeVault(deps.vault, pin, files);
+    const {key} = await writeVault(deps.vault, pin, files);
     await setEncryptionMode(deps.prefs, 'encrypted');
     setActiveKeys(files);
+    setDerivedKey(key);
     return {ok: true, value: undefined};
   } catch (e) {
     return {ok: false, reason: (e as Error).message};
@@ -43,7 +45,10 @@ export const encryptInitial = async (
 };
 
 // Read the encrypted vault with the supplied PIN. On success, also
-// promotes into sessionKey.
+// promotes into sessionKey AND stashes the derived AES key in the
+// derivedKey holder so the conversations store can encrypt without
+// re-deriving on every save. The returned shape strips `key` so the
+// UI doesn't accidentally render or log it.
 export const unlock = async (
   deps: Deps,
   pin: string,
@@ -56,19 +61,27 @@ export const unlock = async (
   const r = await readVault(deps.vault, pin);
   if (r.kind === 'ok') {
     setActiveKeys(r.files);
+    setDerivedKey(r.key);
+    return {kind: 'ok', files: r.files};
   }
   return r;
 };
 
 // Re-encrypt with a new PIN. Caller passes the in-memory files
-// (already unlocked) so we don't ask twice.
+// (already unlocked) so we don't ask twice. The derived key is
+// refreshed alongside the new vault — old conversations encrypted
+// under the previous key cannot be re-encrypted from here (we no
+// longer have the old key) but the user can clear history if that
+// matters; for the typical pin-rotation flow, the cached key just
+// jumps to the new value.
 export const changePin = async (
   deps: Deps,
   newPin: string,
   currentFiles: KeyFile[],
 ): Promise<FlowResult> => {
   try {
-    await writeVault(deps.vault, newPin, currentFiles);
+    const {key} = await writeVault(deps.vault, newPin, currentFiles);
+    setDerivedKey(key);
     return {ok: true, value: undefined};
   } catch (e) {
     return {ok: false, reason: (e as Error).message};
@@ -77,7 +90,9 @@ export const changePin = async (
 
 // Merge a new plaintext .txt into the existing vault. Same-provider
 // entries are replaced; new providers append. Re-encrypts under the
-// SAME pin (caller has already unlocked and provides it back).
+// SAME pin (caller has already unlocked and provides it back). The
+// derived key gets refreshed because writeVault rolls a new salt on
+// every save.
 export const mergeIntoVault = async (
   deps: Deps,
   pin: string,
@@ -96,8 +111,9 @@ export const mergeIntoVault = async (
   }
   const merged = Array.from(byProvider.values());
   try {
-    await writeVault(deps.vault, pin, merged);
+    const {key} = await writeVault(deps.vault, pin, merged);
     setActiveKeys(merged);
+    setDerivedKey(key);
     return {ok: true, value: merged};
   } catch (e) {
     return {ok: false, reason: (e as Error).message};
@@ -106,8 +122,9 @@ export const mergeIntoVault = async (
 
 // Disable encryption: caller passes the unlocked files + writeBack
 // callback that turns them back into .txt files on disk. We then
-// delete the vault and flip prefs to plaintext. SessionKey is
-// cleared because there's nothing to "lock" anymore.
+// delete the vault and flip prefs to plaintext. SessionKey and the
+// derived AES key are both cleared because there's nothing to "lock"
+// anymore.
 export const disableEncryption = async (
   deps: Deps,
   writeBackPlaintext: (files: KeyFile[]) => Promise<void>,
@@ -118,6 +135,7 @@ export const disableEncryption = async (
     await deleteVault(deps.vault);
     await setEncryptionMode(deps.prefs, 'plaintext');
     clearSessionKey();
+    clearDerivedKey();
     return {ok: true, value: undefined};
   } catch (e) {
     return {ok: false, reason: (e as Error).message};
@@ -131,15 +149,18 @@ export const resetVault = async (deps: Deps): Promise<FlowResult> => {
     await deleteVault(deps.vault);
     await setEncryptionMode(deps.prefs, 'undecided');
     clearSessionKey();
+    clearDerivedKey();
     return {ok: true, value: undefined};
   } catch (e) {
     return {ok: false, reason: (e as Error).message};
   }
 };
 
-// Lock without changing anything. Just wipes sessionKey.
+// Lock without changing anything. Wipes both sessionKey and the
+// cached AES key.
 export const lockNow = (): void => {
   clearSessionKey();
+  clearDerivedKey();
 };
 
 // Helper for user-visible mode in the panel header. The chat surface

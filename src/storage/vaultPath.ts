@@ -19,14 +19,19 @@ import {DEFAULT_KEY_ROOT} from './keyFiles';
 
 export const VAULT_FILENAME = 'copilot-key.enc';
 export const PREFS_FILENAME = 'copilot-prefs.json';
+export const CONVERSATIONS_FILENAME = 'copilot-conversations.json';
 const FALLBACK_VAULT_FILENAME = '.copilot-key.enc';
 const FALLBACK_PREFS_FILENAME = '.copilot-prefs.json';
+const FALLBACK_CONVERSATIONS_FILENAME = '.copilot-conversations.json';
 
 export type ResolvedPaths = {
   // Plugin-private dir if available; null when we fell back.
   baseDir: string | null;
   vaultPath: string;
   prefsPath: string;
+  // History file path — same dir as the vault; auto-detected as
+  // plaintext-or-encrypted by the conversations store on read.
+  conversationsPath: string;
 };
 
 export type PluginDirProbe = () => Promise<string | null | undefined>;
@@ -53,11 +58,13 @@ export const resolveVaultPaths = async (
       baseDir: dir,
       vaultPath: `${dir}/${VAULT_FILENAME}`,
       prefsPath: `${dir}/${PREFS_FILENAME}`,
+      conversationsPath: `${dir}/${CONVERSATIONS_FILENAME}`,
     };
   }
   return {
     baseDir: null,
     vaultPath: `${DEFAULT_KEY_ROOT}/${FALLBACK_VAULT_FILENAME}`,
     prefsPath: `${DEFAULT_KEY_ROOT}/${FALLBACK_PREFS_FILENAME}`,
+    conversationsPath: `${DEFAULT_KEY_ROOT}/${FALLBACK_CONVERSATIONS_FILENAME}`,
   };
 };
