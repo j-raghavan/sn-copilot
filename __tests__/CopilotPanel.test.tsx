@@ -192,10 +192,9 @@ describe('CopilotPanel — navigation root', () => {
     expect(mockClose).toHaveBeenCalledTimes(1);
   });
 
-  it('honours initialScopeLabel and initialPiiRedaction; provider falls back to "Demo (no key)"', () => {
+  it('honours initialScopeLabel; provider falls back to "Demo (no key)"', () => {
     const tree = render({
       initialScopeLabel: 'Lasso selection',
-      initialPiiRedaction: false,
     });
     const text = findAllText(tree).join(' | ');
     expect(text).toContain('Context: Lasso selection');
