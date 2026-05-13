@@ -72,7 +72,7 @@ export default function PersonaSettings(
 
   return (
     <View testID="persona-settings" style={styles.section}>
-      <Text style={styles.sectionTitle}>Persona (custom system prompt)</Text>
+      <Text style={styles.sectionTitle}>Custom System Prompt (Persona)</Text>
       <Text style={styles.hint}>
         Override the assistant's built-in steering. Leave empty to use
         the default. Max {CUSTOM_SYSTEM_PROMPT_MAX} characters.

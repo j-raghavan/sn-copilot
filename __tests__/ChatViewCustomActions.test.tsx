@@ -141,6 +141,44 @@ describe('ChatView — custom actions', () => {
     expect(findByTestID(tree, 'chat-suggestion-summarize')).toBeDefined();
     expect(findByTestID(tree, 'chat-suggestion-explain')).toBeDefined();
   });
+
+  it('switches to 3-col layout once total cards exceed 6', () => {
+    // 4 built-ins + 3 customs = 7 cards → 3-col layout. Each card's
+    // style array picks up the compact width (~31%).
+    const customs = [
+      sampleCustom({id: 'c1', label: 'Glossary'}),
+      sampleCustom({id: 'c2', label: 'Risks'}),
+      sampleCustom({id: 'c3', label: 'Translate'}),
+    ];
+    const {tree} = render({customActions: customs});
+    const card = findByTestID(tree, 'chat-suggestion-summarize');
+    // The style array contains the threeCol variant; flatten and
+    // check for the compact width.
+    const flat = (
+      Array.isArray(card.props.style) ? card.props.style.flat(Infinity) : [card.props.style]
+    ).filter(Boolean);
+    const widths = flat
+      .map((s: {width?: string | number}) => s?.width)
+      .filter((w: string | number | undefined) => w !== undefined);
+    expect(widths).toContain('31%');
+  });
+
+  it('stays in 2-col layout when total cards <= 6', () => {
+    // 4 built-ins + 2 customs = 6 → 2-col layout (48% width).
+    const customs = [
+      sampleCustom({id: 'c1', label: 'A'}),
+      sampleCustom({id: 'c2', label: 'B'}),
+    ];
+    const {tree} = render({customActions: customs});
+    const card = findByTestID(tree, 'chat-suggestion-summarize');
+    const flat = (
+      Array.isArray(card.props.style) ? card.props.style.flat(Infinity) : [card.props.style]
+    ).filter(Boolean);
+    const widths = flat
+      .map((s: {width?: string | number}) => s?.width)
+      .filter((w: string | number | undefined) => w !== undefined);
+    expect(widths).toContain('48%');
+  });
 });
 
 describe('ChatView — custom system prompt', () => {

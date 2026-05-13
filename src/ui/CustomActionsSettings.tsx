@@ -57,20 +57,24 @@ export default function CustomActionsSettings(
           no parseable lines.
         </Text>
       ) : (
-        actions.map((a) => (
-          <View
-            key={a.id}
-            testID={`custom-action-preview-${a.id}`}
-            style={styles.row}>
-            <Text style={styles.icon}>{a.icon}</Text>
-            <View style={styles.rowText}>
-              <Text style={styles.label}>{a.label}</Text>
+        <View style={styles.grid}>
+          {actions.map((a) => (
+            <View
+              key={a.id}
+              testID={`custom-action-preview-${a.id}`}
+              style={styles.tile}>
+              <View style={styles.tileHeader}>
+                <Text style={styles.icon}>{a.icon}</Text>
+                <Text style={styles.label} numberOfLines={1}>
+                  {a.label}
+                </Text>
+              </View>
               <Text style={styles.promptPreview} numberOfLines={2}>
                 {a.prompt}
               </Text>
             </View>
-          </View>
-        ))
+          ))}
+        </View>
       )}
 
       <TouchableOpacity
@@ -109,26 +113,35 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     paddingVertical: 8,
   },
-  row: {
+  // 2-column grid matches the chat empty-state SuggestionCards
+  // density so what the user sees in Settings is exactly what
+  // they'll get on the chat surface.
+  grid: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  tile: {
+    width: '48%',
+    paddingHorizontal: 10,
     paddingVertical: 8,
-    paddingHorizontal: 8,
     borderWidth: 1,
     borderColor: '#000000',
-    borderRadius: 4,
-    marginBottom: 6,
+    borderRadius: 8,
+    marginBottom: 8,
+    minHeight: 60,
   },
-  rowText: {marginLeft: 8, flex: 1},
+  tileHeader: {flexDirection: 'row', alignItems: 'center', marginBottom: 4},
   icon: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
     color: '#000000',
-    width: 28,
+    minWidth: 20,
     textAlign: 'center',
+    marginRight: 6,
   },
-  label: {fontSize: 14, color: '#000000', fontWeight: '600'},
-  promptPreview: {fontSize: 12, color: '#000000', marginTop: 2},
+  label: {fontSize: 13, color: '#000000', fontWeight: '600', flex: 1},
+  promptPreview: {fontSize: 11, color: '#000000', fontStyle: 'italic'},
   btn: {
     marginTop: 8,
     alignSelf: 'flex-start',

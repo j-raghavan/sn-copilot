@@ -56,7 +56,6 @@ import type {
 // (CustomAction stays imported for the read-only display below.)
 import CustomActionsSettings from './CustomActionsSettings';
 import EncryptionScreen from './EncryptionScreen';
-import EncryptionSettings from './EncryptionSettings';
 import MigrationPrompt from './MigrationPrompt';
 import PersonaSettings from './PersonaSettings';
 import PinSetup from './PinSetup';
@@ -466,8 +465,75 @@ function SettingsViewBody(props: {
         />
       ) : null}
 
+      {/* Compact action row at the top: Refresh / Test Connection /
+          Encryption all on one line. Replaces the three separate
+          sections that wasted vertical space on the e-ink overlay.
+          Test Connection's status output (running spinner, OK, or
+          error) renders BELOW the row as needed. */}
+      <View testID="settings-action-row" style={styles.actionRow}>
+        <TouchableOpacity
+          testID="settings-refresh"
+          accessibilityLabel="Re-scan key files"
+          onPress={refresh}
+          style={styles.actionBtn}>
+          <Text style={styles.actionBtnText}>{'⟳ Refresh'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          testID="settings-test-connection"
+          accessibilityLabel="Test connection"
+          onPress={onTestConnection}
+          disabled={
+            resolution?.kind !== 'ok' || testStatus.kind === 'running'
+          }
+          style={[
+            styles.actionBtn,
+            (resolution?.kind !== 'ok' || testStatus.kind === 'running') &&
+              styles.btnDisabled,
+          ]}>
+          <Text style={styles.actionBtnText}>{'⚡ Test'}</Text>
+        </TouchableOpacity>
+        {state !== null ? (
+          <TouchableOpacity
+            testID="encryption-nav-open"
+            accessibilityLabel="Open encryption settings"
+            onPress={() => setSubFlow({kind: 'encryption'})}
+            style={styles.actionBtn}>
+            <Text style={styles.actionBtnText}>
+              {prefs.encryptionMode === 'encrypted'
+                ? state.kind === 'unlocked'
+                  ? '🔒 Unlocked'
+                  : '🔒 Locked'
+                : '🔒 Encrypt'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {/* Inline test-connection status output. Stays just under the
+          action row so the user sees the result without scrolling. */}
+      {testStatus.kind === 'running' ? (
+        <View testID="settings-test-status" style={styles.testStatusRow}>
+          <ActivityIndicator size="small" color="#000000" />
+          <Text style={styles.testStatusText}>Testing…</Text>
+        </View>
+      ) : null}
+      {testStatus.kind === 'ok' ? (
+        <View testID="settings-test-status" style={styles.testOkBlock}>
+          <Text style={styles.testStatusText}>
+            ✓ Connection OK! ({testStatus.modelId} · {testStatus.latencyMs}ms)
+          </Text>
+        </View>
+      ) : null}
+      {testStatus.kind === 'error' ? (
+        <View testID="settings-test-status" style={styles.testErrorBlock}>
+          <Text style={styles.testErrorText}>
+            ✕ Connection failed: {testStatus.message}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Provider configuration</Text>
+        <Text style={styles.sectionTitle}>Provider</Text>
         {resolution === null ? (
           <Text testID="settings-discovery-loading" style={styles.metaLine}>
             Loading…
@@ -476,13 +542,6 @@ function SettingsViewBody(props: {
         {resolution !== null ? (
           <KeyFileBlock resolution={resolution} />
         ) : null}
-        <TouchableOpacity
-          testID="settings-refresh"
-          accessibilityLabel="Re-scan key files"
-          onPress={refresh}
-          style={styles.refreshBtn}>
-          <Text style={styles.refreshBtnText}>Refresh from disk</Text>
-        </TouchableOpacity>
         {errors.length > 0 ? (
           <View testID="settings-errors" style={styles.errorBlock}>
             <Text style={styles.errorTitle}>Parse errors</Text>
@@ -494,85 +553,6 @@ function SettingsViewBody(props: {
           </View>
         ) : null}
       </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Test connection</Text>
-        <TouchableOpacity
-          testID="settings-test-connection"
-          accessibilityLabel="Test connection"
-          onPress={onTestConnection}
-          disabled={
-            resolution?.kind !== 'ok' || testStatus.kind === 'running'
-          }
-          style={[
-            styles.testBtn,
-            (resolution?.kind !== 'ok' || testStatus.kind === 'running') &&
-              styles.btnDisabled,
-          ]}>
-          <Text style={styles.testBtnText}>Test Connection</Text>
-        </TouchableOpacity>
-        {testStatus.kind === 'running' ? (
-          <View testID="settings-test-status" style={styles.testStatusRow}>
-            <ActivityIndicator size="small" color="#000000" />
-            <Text style={styles.testStatusText}>Testing…</Text>
-          </View>
-        ) : null}
-        {testStatus.kind === 'ok' ? (
-          <View testID="settings-test-status" style={styles.testOkBlock}>
-            <Text style={styles.testStatusText}>
-              ✓ Connection OK! ({testStatus.modelId} · {testStatus.latencyMs}ms)
-            </Text>
-          </View>
-        ) : null}
-        {testStatus.kind === 'error' ? (
-          <View testID="settings-test-status" style={styles.testErrorBlock}>
-            <Text style={styles.testErrorText}>
-              ✕ Connection failed: {testStatus.message}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-
-      {state !== null ? (
-        prefs.encryptionMode === 'encrypted' ? (
-          // Encrypted vault: a single nav row that drills into the
-          // dedicated EncryptionScreen sub-flow. Declutters the main
-          // page on small e-ink overlays. The summary line gives the
-          // user enough state to decide whether to drill in.
-          <View testID="encryption-nav" style={styles.section}>
-            <Text style={styles.sectionTitle}>Key encryption</Text>
-            <TouchableOpacity
-              testID="encryption-nav-open"
-              accessibilityLabel="Open encryption settings"
-              onPress={() => setSubFlow({kind: 'encryption'})}
-              style={styles.navRow}>
-              <Text style={styles.navRowText}>
-                {'🔒 Encryption: '}
-                {state.kind === 'unlocked' ? 'unlocked' : 'locked'}
-                {state.kind === 'unlocked'
-                  ? ` · auto-lock in ${prefs.idleTimeoutMin} min`
-                  : ''}
-              </Text>
-              <Text style={styles.navRowChevron}>{'›'}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          // Plaintext / undecided: the Enable-encryption CTA stays
-          // visible inline. Hiding it behind a nav row would hurt
-          // discoverability for the most important security flow.
-          <EncryptionSettings
-            encryptionMode={prefs.encryptionMode}
-            unlocked={state.kind === 'unlocked'}
-            idleTimeoutMin={prefs.idleTimeoutMin}
-            onEnableEncryption={onEncryptStart}
-            onLockNow={onLockNow}
-            onChangePin={onChangePinStart}
-            onDisableEncryption={onDisable}
-            onResetVault={onResetVault}
-            onIdleTimeoutChange={onIdleTimeoutChange}
-          />
-        )
-      ) : null}
 
       <PersonaSettings
         current={personaDraft}
@@ -866,18 +846,24 @@ const styles = StyleSheet.create({
     color: '#000000',
     marginBottom: 2,
   },
-  testBtn: {
-    paddingHorizontal: 14,
+  // Compact top action row: three buttons fit on one line.
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  actionBtn: {
+    flex: 1,
     paddingVertical: 8,
+    paddingHorizontal: 6,
     borderWidth: 1,
     borderColor: '#000000',
     borderRadius: 4,
-    alignSelf: 'flex-start',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  testBtnText: {
-    fontSize: 14,
-    color: '#000000',
-  },
+  actionBtnText: {fontSize: 13, color: '#000000', fontWeight: '600'},
   btnDisabled: {
     opacity: 0.4,
   },
@@ -916,17 +902,4 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     paddingVertical: 4,
   },
-  navRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 8,
-    marginTop: 4,
-  },
-  navRowText: {fontSize: 14, color: '#000000', flexShrink: 1},
-  navRowChevron: {fontSize: 18, color: '#000000', marginLeft: 8},
 });

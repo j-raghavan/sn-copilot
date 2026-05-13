@@ -381,11 +381,12 @@ describe('SettingsView — encrypted+unlocked actions', () => {
       await flushPromises();
     });
     // Vault gone, plaintext written. The sub-screen also auto-exited
-    // back to the main Settings where the plaintext-CTA block now
-    // renders inline.
+    // back to the main Settings.
     expect(fs.has(VAULT_PATH)).toBe(false);
     expect(fs.has(TXT_PATH)).toBe(true);
-    expect(findByTestID(tree, 'encryption-settings-plaintext')).toBeDefined();
+    // The action row's encryption button now offers the
+    // "Encrypt" CTA (encryptionMode is plaintext post-disable).
+    expect(findByTestID(tree, 'encryption-nav-open')).toBeDefined();
   });
 
   it('Reset deletes the vault and returns to no-key', async () => {
@@ -399,10 +400,10 @@ describe('SettingsView — encrypted+unlocked actions', () => {
       await flushPromises();
     });
     expect(fs.has(VAULT_PATH)).toBe(false);
-    // Auto-return-to-idle: the encryption sub-screen exits and the
-    // main Settings now renders the plaintext branch (no vault + no
-    // plaintext key file = the plaintext-CTA path on Settings).
-    expect(findByTestID(tree, 'encryption-settings-plaintext')).toBeDefined();
+    // Auto-return-to-idle: the encryption sub-screen exits; the
+    // action row's encryption button is back at the plaintext label
+    // (no vault, no plaintext key, mode is 'undecided').
+    expect(findByTestID(tree, 'encryption-nav-open')).toBeDefined();
   });
 
   it('Idle-timeout pill press persists the new value', async () => {

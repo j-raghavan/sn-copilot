@@ -809,6 +809,13 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
 // the old "Tap a quick action above" hint. Tapping a card fires the
 // same onActionTap plumbing as the previous header row. Once the
 // user sends a message the grid vanishes; "New chat" brings it back.
+//
+// Column count adapts to the total number of actions so the grid
+// stays on one screen as the user adds custom actions:
+//   - ≤ 6 cards (4 built-ins + up to 2 customs) → 2 columns
+//   - ≥ 7 cards → 3 columns, smaller per-card width
+// Beyond ~8 cards the chat scroll naturally takes over for overflow.
+const SUGGESTION_COL_BREAKPOINT = 6;
 function SuggestionCards({
   actions,
   disabled,
@@ -818,6 +825,7 @@ function SuggestionCards({
   disabled: boolean;
   onTap: (actionId: string) => void;
 }): React.JSX.Element {
+  const threeCol = actions.length > SUGGESTION_COL_BREAKPOINT;
   return (
     <View testID="chat-suggestions" style={styles.suggestionsRoot}>
       <Text style={styles.suggestionsHint}>
@@ -831,14 +839,36 @@ function SuggestionCards({
             accessibilityLabel={a.label}
             onPress={() => onTap(a.id)}
             disabled={disabled}
-            style={[styles.suggestionCard, disabled && styles.btnDisabled]}>
+            style={[
+              styles.suggestionCard,
+              threeCol
+                ? styles.suggestionCardThreeCol
+                : styles.suggestionCardTwoCol,
+              disabled && styles.btnDisabled,
+            ]}>
             <View style={styles.suggestionCardHeader}>
-              <Text style={styles.suggestionIcon}>{a.icon}</Text>
-              <Text style={styles.suggestionLabel} numberOfLines={1}>
+              <Text
+                style={[
+                  styles.suggestionIcon,
+                  threeCol && styles.suggestionIconCompact,
+                ]}>
+                {a.icon}
+              </Text>
+              <Text
+                style={[
+                  styles.suggestionLabel,
+                  threeCol && styles.suggestionLabelCompact,
+                ]}
+                numberOfLines={1}>
                 {a.label}
               </Text>
             </View>
-            <Text style={styles.suggestionPrompt} numberOfLines={2}>
+            <Text
+              style={[
+                styles.suggestionPrompt,
+                threeCol && styles.suggestionPromptCompact,
+              ]}
+              numberOfLines={2}>
               {a.prompt}
             </Text>
           </TouchableOpacity>
@@ -1254,15 +1284,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   suggestionCard: {
-    width: '48%',
     paddingHorizontal: 10,
     paddingVertical: 10,
     borderWidth: 1,
     borderColor: '#000000',
     borderRadius: 8,
     marginBottom: 8,
-    minHeight: 72,
   },
+  suggestionCardTwoCol: {width: '48%', minHeight: 72},
+  // 3-column variant: ~31% width with reduced padding/min-height so
+  // up to 9 cards fit on one e-ink panel without scrolling.
+  suggestionCardThreeCol: {width: '31%', minHeight: 60, paddingHorizontal: 8},
   suggestionCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1276,11 +1308,14 @@ const styles = StyleSheet.create({
     minWidth: 22,
     textAlign: 'center',
   },
+  suggestionIconCompact: {fontSize: 15, minWidth: 18, marginRight: 4},
   suggestionLabel: {
     fontSize: 15,
     fontWeight: '600',
     color: '#000000',
     flex: 1,
   },
+  suggestionLabelCompact: {fontSize: 13},
   suggestionPrompt: {fontSize: 12, color: '#000000', fontStyle: 'italic'},
+  suggestionPromptCompact: {fontSize: 11},
 });

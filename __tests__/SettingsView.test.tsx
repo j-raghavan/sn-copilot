@@ -596,6 +596,17 @@ describe('SettingsView — persona + custom-actions save flows', () => {
     expect(findByTestID(tree, 'custom-actions-settings')).toBeDefined();
   });
 
+  it('top action row collapses Refresh / Test / Encryption into one line', async () => {
+    const {tree} = renderSettings();
+    await act(async () => {
+      await flushPromises();
+    });
+    expect(findByTestID(tree, 'settings-action-row')).toBeDefined();
+    expect(findByTestID(tree, 'settings-refresh')).toBeDefined();
+    expect(findByTestID(tree, 'settings-test-connection')).toBeDefined();
+    expect(findByTestID(tree, 'encryption-nav-open')).toBeDefined();
+  });
+
   it('persona save flow invokes the onSavePersona closure (no crash)', async () => {
     const {tree} = renderSettings();
     await act(async () => {
