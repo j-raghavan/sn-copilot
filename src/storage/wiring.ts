@@ -16,7 +16,10 @@ import {readPrefs, type PrefsDeps} from './prefs';
 export type WiringBundle = {
   io: FileIo;
   vaultDeps: {io: FileIo; vaultPath: string; logger: Logger};
-  prefsDeps: {io: FileIo; prefsPath: string; logger: Logger};
+  // Reuse PrefsDeps so the optional-logger contract aligns with what
+  // readPrefs / writePrefs actually expect. The wiring still provides
+  // a real logger at construction time — this is just type honesty.
+  prefsDeps: PrefsDeps;
   discoveryDeps: {fileUtils: FileUtilsLike; logger: Logger};
   conversationsDeps: ConversationsDeps;
 };

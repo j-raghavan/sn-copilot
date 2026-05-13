@@ -11,10 +11,12 @@
 // Stub the host-side libs that wiring imports. We don't exercise the
 // real native bridges here — wiring's job is purely to glue them
 // together with the right options, and we verify that gluing.
-const mockGetPluginDirPath = jest.fn();
-const mockFsExists = jest.fn(async () => false);
-const mockFsDelete = jest.fn(async () => true);
-const mockFsRename = jest.fn(async () => true);
+const mockGetPluginDirPath = jest.fn<Promise<string | null>, []>();
+const mockFsExists = jest.fn<Promise<boolean>, [string]>(async () => false);
+const mockFsDelete = jest.fn<Promise<boolean>, [string]>(async () => true);
+const mockFsRename = jest.fn<Promise<boolean>, [string, string]>(
+  async () => true,
+);
 
 jest.mock('sn-plugin-lib', () => ({
   FileUtils: {

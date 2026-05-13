@@ -29,7 +29,10 @@ const sample = (over: Partial<CustomAction> = {}): CustomAction => ({
 });
 
 function render(over: Partial<React.ComponentProps<typeof CustomActionsSettings>> = {}) {
-  const onSave = jest.fn(async () => {});
+  // Explicit signature so onSave.mock.calls[i][0] is typed as
+  // CustomAction[] rather than the never[] you get from
+  // `jest.fn(async () => {})`'s inferred parameter list.
+  const onSave = jest.fn<Promise<void>, [CustomAction[]]>(async () => {});
   let tree!: ReactTestRenderer;
   act(() => {
     tree = create(
@@ -99,7 +102,7 @@ describe('CustomActionsSettings — Add flow', () => {
       await Promise.resolve();
     });
     expect(onSave).toHaveBeenCalledTimes(1);
-    const next: CustomAction[] = onSave.mock.calls[0][0];
+    const next = onSave.mock.calls[0][0];
     expect(next).toHaveLength(1);
     expect(next[0].label).toBe('Find');
     expect(next[0].icon).toBe('🔍');
@@ -179,7 +182,7 @@ describe('CustomActionsSettings — Edit flow', () => {
       findByTestID(tree, 'custom-action-save').props.onPress();
       await Promise.resolve();
     });
-    const next: CustomAction[] = onSave.mock.calls[0][0];
+    const next = onSave.mock.calls[0][0];
     expect(next).toHaveLength(2);
     expect(next.find((x) => x.id === a.id)?.label).toBe('Definitions');
     expect(next.find((x) => x.id === b.id)?.label).toBe('Risks');
@@ -209,7 +212,7 @@ describe('CustomActionsSettings — Delete', () => {
       findByTestID(tree, `custom-action-delete-${a.id}`).props.onPress();
       await Promise.resolve();
     });
-    const next: CustomAction[] = onSave.mock.calls[0][0];
+    const next = onSave.mock.calls[0][0];
     expect(next).toEqual([b]);
   });
 });
