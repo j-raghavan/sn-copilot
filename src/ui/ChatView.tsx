@@ -59,6 +59,7 @@ import {
   type ConversationsDeps,
 } from '../storage/conversations';
 import {composeUserText} from './composePrompt';
+import {shouldAttachPageContext, type SendSource} from './contextRouting';
 import {buildMarkdownStyles} from './markdownStyles';
 import {markdownToPlainText} from './markdownToPlain';
 import {sanitizeProviderError} from './sanitizeProviderError';
@@ -351,7 +352,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     [conversationsDeps, currentConversationId, keyFile?.provider],
   );
 
-  const sendUserMessage = useCallback(async (text: string) => {
+  const sendUserMessage = useCallback(async (text: string, source: SendSource) => {
     const trimmed = text.trim();
     if (trimmed.length === 0) {
       return;
@@ -370,11 +371,19 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     const ctl = new AbortController();
     const timeoutId = setTimeout(() => ctl.abort(), SEND_TIMEOUT_MS);
     try {
+      // Smart context routing (Req 4): quick actions always attach
+      // the page; freeform input only attaches when the message
+      // looks page-referential (see contextRouting.isPageReferential).
+      // Off-topic freeform questions become a general AI chat —
+      // saves tokens AND respects the user's "I'm asking something
+      // else now" intent.
+      const attachContext = shouldAttachPageContext(source, trimmed);
       // pageContext is populated as a Promise at sidebar-tap time
       // so the popup can open before screenshot + OCR finishes.
       // Awaiting here absorbs any residual capture latency under the
-      // existing "thinking" placeholder.
-      const ctx = await getPageContext();
+      // existing "thinking" placeholder. When we won't attach, skip
+      // the await entirely.
+      const ctx = attachContext ? await getPageContext() : null;
       // Vision capability is purely a property of the provider —
       // anthropic / openai / gemini get the page image, deepseek
       // doesn't. For text-only providers we silently scrub emails
@@ -390,6 +399,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       infoLog(
         '[COPILOT_CHAT] send ' +
           `provider=${keyFile?.provider ?? 'fake'} ` +
+          `source=${source} attachContext=${attachContext} ` +
           `allowImage=${allowImage} ` +
           `imageAttached=${imageBase64 !== undefined} ` +
           `userText.length=${userText.length} ` +
@@ -455,6 +465,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   // The id is opaque here — we look up the prompt from the merged
   // list. Built-in ids are the closed `QuickActionId` union; custom
   // ids are arbitrary strings minted at save time in Settings.
+  // Source = 'quick-action' so the page context is always attached.
   const onActionTap = useCallback(
     (actionId: string) => {
       if (!hasKeyFile) {
@@ -464,16 +475,19 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       if (def === undefined) {
         return;
       }
-      sendUserMessage(def.prompt);
+      sendUserMessage(def.prompt, 'quick-action');
     },
     [hasKeyFile, mergedActions, sendUserMessage],
   );
 
+  // Source = 'freeform' so contextRouting.isPageReferential gates
+  // whether the page context is attached. Off-topic freeform
+  // questions become a general AI chat.
   const onSendInput = useCallback(() => {
     if (!hasKeyFile) {
       return;
     }
-    sendUserMessage(input);
+    sendUserMessage(input, 'freeform');
   }, [hasKeyFile, input, sendUserMessage]);
 
   // Per-bubble copy. The bubble renders the LLM's markdown source
