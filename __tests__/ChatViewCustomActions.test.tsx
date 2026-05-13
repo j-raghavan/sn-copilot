@@ -243,3 +243,30 @@ describe('ChatView — action row layout', () => {
     expect(maybeFindByTestID(tree, 'chat-history')).toBeNull();
   });
 });
+
+describe('ChatView — lock button', () => {
+  it('renders 🔒 in the context row when showLockButton + onLockNow are wired', () => {
+    const onLockNow = jest.fn();
+    const {tree} = render({showLockButton: true, onLockNow});
+    expect(findByTestID(tree, 'chat-lock')).toBeDefined();
+  });
+
+  it('is hidden when showLockButton is false', () => {
+    const {tree} = render({showLockButton: false, onLockNow: jest.fn()});
+    expect(maybeFindByTestID(tree, 'chat-lock')).toBeNull();
+  });
+
+  it('is hidden when onLockNow is missing even with showLockButton=true', () => {
+    const {tree} = render({showLockButton: true});
+    expect(maybeFindByTestID(tree, 'chat-lock')).toBeNull();
+  });
+
+  it('tapping 🔒 calls onLockNow', () => {
+    const onLockNow = jest.fn();
+    const {tree} = render({showLockButton: true, onLockNow});
+    act(() => {
+      findByTestID(tree, 'chat-lock').props.onPress();
+    });
+    expect(onLockNow).toHaveBeenCalledTimes(1);
+  });
+});

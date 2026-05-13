@@ -220,6 +220,30 @@ describe('CopilotPanel — encrypted vault', () => {
     expect(findByTestID(tree, 'chat-view')).toBeDefined();
     expect(findAllText(tree).join(' | ')).toContain('Provider: Anthropic');
   });
+
+  it('unlocked chat shows the 🔒 lock icon; tapping it relocks → UnlockScreen', async () => {
+    await seedVault('123456', [sampleKey]);
+    const tree = render();
+    await waitFor(tree, () => maybeFindByTestID(tree, 'unlock-screen') !== null);
+    act(() => {
+      findByTestID(tree, 'unlock-input').props.onChangeText('123456');
+    });
+    await act(async () => {
+      findByTestID(tree, 'unlock-submit').props.onPress();
+      await flushPromises();
+    });
+    await waitFor(tree, () => maybeFindByTestID(tree, 'chat-view') !== null);
+    // The chat-lock icon is gated on state.kind === 'unlocked'.
+    expect(findByTestID(tree, 'chat-lock')).toBeDefined();
+    await act(async () => {
+      findByTestID(tree, 'chat-lock').props.onPress();
+      await flushPromises();
+    });
+    // lockNowFlow flips sessionKey to null; CopilotPanelInner re-renders
+    // and swaps in UnlockScreen.
+    await waitFor(tree, () => maybeFindByTestID(tree, 'unlock-screen') !== null);
+    expect(maybeFindByTestID(tree, 'chat-view')).toBeNull();
+  });
 });
 
 describe('CopilotPanel — merge state', () => {

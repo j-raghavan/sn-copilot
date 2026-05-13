@@ -46,6 +46,7 @@ import type {
   ProviderResolution,
 } from '../types';
 import CustomActionsSettings from './CustomActionsSettings';
+import EncryptionScreen from './EncryptionScreen';
 import EncryptionSettings from './EncryptionSettings';
 import MigrationPrompt from './MigrationPrompt';
 import PersonaSettings from './PersonaSettings';
@@ -70,12 +71,16 @@ type TestStatus =
   | {kind: 'error'; message: string};
 
 // Sub-screens stacked on top of the main settings — the "encryption
-// flow" pseudo-modes. Selected by the user via the migration banner
-// or the encryption section actions.
+// flow" pseudo-modes. Selected by the user via the migration banner,
+// the encryption nav row, or the actions inside the encryption screen.
 type SubFlow =
   | {kind: 'idle'}
   | {kind: 'pin-setup'; intent: 'create' | 'change'}
-  | {kind: 'post-encrypt-cleanup'; sourcePaths: string[]};
+  | {kind: 'post-encrypt-cleanup'; sourcePaths: string[]}
+  // P2 UX cleanup: when the vault is encrypted, the dense list of
+  // Auto-lock / Lock now / Change PIN / Disable / Reset lives behind
+  // a single nav row on the main settings, opened as this sub-screen.
+  | {kind: 'encryption'};
 
 const maskKey = (raw: string): string => {
   if (raw.length <= 7) {
@@ -341,11 +346,16 @@ function SettingsViewBody(props: {
       writeBack,
       unlocked,
     );
+    // Encryption is gone — exit the sub-screen so the user lands on
+    // the main settings with the now-correct plaintext CTA. Idempotent
+    // when the action was triggered from the main settings already.
+    setSubFlow({kind: 'idle'});
     await refresh();
   }, [bundle.io, bundle.prefsDeps, bundle.vaultDeps, refresh]);
 
   const onResetVault = useCallback(async () => {
     await resetVault({vault: bundle.vaultDeps, prefs: bundle.prefsDeps});
+    setSubFlow({kind: 'idle'});
     await refresh();
   }, [bundle.prefsDeps, bundle.vaultDeps, refresh]);
 
@@ -393,6 +403,22 @@ function SettingsViewBody(props: {
         sourcePaths={subFlow.sourcePaths}
         onDelete={onCleanupConfirmDelete}
         onSkip={onCleanupSkipDelete}
+      />
+    );
+  }
+  if (subFlow.kind === 'encryption' && state !== null) {
+    return (
+      <EncryptionScreen
+        encryptionMode={prefs.encryptionMode}
+        unlocked={state.kind === 'unlocked'}
+        idleTimeoutMin={prefs.idleTimeoutMin}
+        onEnableEncryption={onEncryptStart}
+        onLockNow={onLockNow}
+        onChangePin={onChangePinStart}
+        onDisableEncryption={onDisable}
+        onResetVault={onResetVault}
+        onIdleTimeoutChange={onIdleTimeoutChange}
+        onBack={() => setSubFlow({kind: 'idle'})}
       />
     );
   }
@@ -489,17 +515,44 @@ function SettingsViewBody(props: {
       </View>
 
       {state !== null ? (
-        <EncryptionSettings
-          encryptionMode={prefs.encryptionMode}
-          unlocked={state.kind === 'unlocked'}
-          idleTimeoutMin={prefs.idleTimeoutMin}
-          onEnableEncryption={onEncryptStart}
-          onLockNow={onLockNow}
-          onChangePin={onChangePinStart}
-          onDisableEncryption={onDisable}
-          onResetVault={onResetVault}
-          onIdleTimeoutChange={onIdleTimeoutChange}
-        />
+        prefs.encryptionMode === 'encrypted' ? (
+          // Encrypted vault: a single nav row that drills into the
+          // dedicated EncryptionScreen sub-flow. Declutters the main
+          // page on small e-ink overlays. The summary line gives the
+          // user enough state to decide whether to drill in.
+          <View testID="encryption-nav" style={styles.section}>
+            <Text style={styles.sectionTitle}>Key encryption</Text>
+            <TouchableOpacity
+              testID="encryption-nav-open"
+              accessibilityLabel="Open encryption settings"
+              onPress={() => setSubFlow({kind: 'encryption'})}
+              style={styles.navRow}>
+              <Text style={styles.navRowText}>
+                {'🔒 Encryption: '}
+                {state.kind === 'unlocked' ? 'unlocked' : 'locked'}
+                {state.kind === 'unlocked'
+                  ? ` · auto-lock in ${prefs.idleTimeoutMin} min`
+                  : ''}
+              </Text>
+              <Text style={styles.navRowChevron}>{'›'}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          // Plaintext / undecided: the Enable-encryption CTA stays
+          // visible inline. Hiding it behind a nav row would hurt
+          // discoverability for the most important security flow.
+          <EncryptionSettings
+            encryptionMode={prefs.encryptionMode}
+            unlocked={state.kind === 'unlocked'}
+            idleTimeoutMin={prefs.idleTimeoutMin}
+            onEnableEncryption={onEncryptStart}
+            onLockNow={onLockNow}
+            onChangePin={onChangePinStart}
+            onDisableEncryption={onDisable}
+            onResetVault={onResetVault}
+            onIdleTimeoutChange={onIdleTimeoutChange}
+          />
+        )
       ) : null}
 
       <PersonaSettings
@@ -800,4 +853,17 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     paddingVertical: 4,
   },
+  navRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  navRowText: {fontSize: 14, color: '#000000', flexShrink: 1},
+  navRowChevron: {fontSize: 18, color: '#000000', marginLeft: 8},
 });

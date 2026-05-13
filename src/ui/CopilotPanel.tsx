@@ -20,7 +20,12 @@ import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import CopilotOverlay from '../native/CopilotOverlay';
 import {resolveActiveProvider} from '../storage/activeProvider';
 import {useCopilotState} from '../storage/useCopilotState';
-import {mergeIntoVault, unlock as unlockFlow, resetVault} from '../storage/secureFlows';
+import {
+  lockNow as lockNowFlow,
+  mergeIntoVault,
+  resetVault,
+  unlock as unlockFlow,
+} from '../storage/secureFlows';
 import {buildWiringBundle, type WiringBundle} from '../storage/wiring';
 import {setPageContext} from '../scope/pageContext';
 import type {KeyFile} from '../types';
@@ -166,6 +171,18 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
     await refresh();
   }, [bundle.prefsDeps, bundle.vaultDeps, refresh]);
 
+  // Triggered by the chat header 🔒 icon. lockNowFlow wipes the
+  // session + derived key; the next render of CopilotPanelInner sees
+  // state.kind === 'locked' and swaps in UnlockScreen automatically.
+  const onLockFromChat = useCallback(() => {
+    lockNowFlow();
+  }, []);
+
+  // The lock icon only makes sense when the vault is BOTH encrypted
+  // AND currently unlocked — there's nothing to lock otherwise.
+  const showLockButton =
+    state !== null && state.kind === 'unlocked';
+
   // 'locked' or 'merge' (vault present, can't proceed without unlock)
   // fully gate the chat surface. The settings cog is hidden because
   // there's nothing actionable in settings until unlock.
@@ -192,6 +209,8 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
       conversationsDeps={bundle.conversationsDeps}
       customSystemPrompt={prefs.customSystemPrompt}
       customActions={prefs.customActions}
+      showLockButton={showLockButton}
+      onLockNow={onLockFromChat}
       onSettingsTap={() => setView('settings')}
       onClose={closeOverlay}
     />

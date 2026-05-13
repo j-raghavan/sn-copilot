@@ -106,6 +106,13 @@ export type ChatViewProps = {
   // P2: user-defined quick actions appended to the 4 built-ins. The
   // row horizontally scrolls when the combined width overflows.
   customActions?: CustomAction[];
+  // P2 UX: when the vault is encrypted AND currently unlocked, the
+  // parent renders a 🔒 icon in the context row that taps onLockNow.
+  // Settings still has a Lock-now option behind the encryption
+  // sub-screen; the chat icon is the "step away from device"
+  // shortcut so users don't have to navigate two levels deep.
+  showLockButton?: boolean;
+  onLockNow?: () => void;
   onSettingsTap: () => void;
   onClose: () => void;
 };
@@ -197,6 +204,8 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     conversationsDeps,
     customSystemPrompt,
     customActions,
+    showLockButton,
+    onLockNow,
     onSettingsTap,
     onClose,
   } = props;
@@ -622,17 +631,28 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         </View>
       </View>
 
-      {/* Context row: scope label on the left, History + New-chat +
-          Settings icons on the right. History (📚) opens the recent-
-          conversations list inline; New-chat (📝) starts a fresh
-          conversation id; Settings (⚙) opens the settings screen.
-          Putting Settings here (instead of the footer) makes it
-          discoverable without scrolling. */}
+      {/* Context row: scope label on the left, Lock + History +
+          New-chat + Settings icons on the right. Lock (🔒) is only
+          rendered when the parent reports the vault is encrypted +
+          unlocked — keeps "step away from device" one tap from chat
+          without forcing two-level navigation through Settings.
+          History (📚) opens the recent-conversations list inline;
+          New-chat (📝) starts a fresh conversation id; Settings (⚙)
+          opens the settings screen. */}
       <View style={styles.contextRow}>
         <Text testID="chat-context" style={styles.contextLine}>
           Context: {scopeLabel}
         </Text>
         <View style={styles.contextActions}>
+          {showLockButton && onLockNow !== undefined ? (
+            <TouchableOpacity
+              testID="chat-lock"
+              accessibilityLabel="Lock Copilot now"
+              onPress={onLockNow}
+              style={styles.iconBtn}>
+              <Text style={styles.iconBtnText}>🔒</Text>
+            </TouchableOpacity>
+          ) : null}
           {history.length > 0 ? (
             <TouchableOpacity
               testID="chat-history"
