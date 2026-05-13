@@ -14,14 +14,8 @@
 // surface by a corrupt prefs file. Writes are last-write-wins.
 
 import {
-  CUSTOM_ACTION_ICON_MAX,
-  CUSTOM_ACTION_LABEL_MAX,
-  CUSTOM_ACTION_LIMIT,
-  CUSTOM_ACTION_PROMPT_MAX,
-  CUSTOM_SYSTEM_PROMPT_MAX,
   DEFAULT_PREFS,
   type CopilotPrefs,
-  type CustomAction,
   type EncryptionMode,
 } from '../types';
 import type {FileIo} from './fileIo';
@@ -48,69 +42,6 @@ const noopLogger: Logger = {log: NOOP, warn: NOOP, error: NOOP};
 const isShape = (v: unknown): v is Partial<CopilotPrefs> =>
   typeof v === 'object' && v !== null;
 
-// Pulls a string field if it's a string and within the length cap;
-// returns undefined to drop the field entirely (we don't persist a
-// half-good value).
-const safeString = (v: unknown, maxLen: number): string | undefined => {
-  if (typeof v !== 'string') {
-    return undefined;
-  }
-  if (v.length > maxLen) {
-    return undefined;
-  }
-  return v;
-};
-
-const isValidAction = (v: unknown): v is CustomAction => {
-  if (typeof v !== 'object' || v === null) {
-    return false;
-  }
-  const o = v as Record<string, unknown>;
-  if (typeof o.id !== 'string' || o.id.length === 0) {
-    return false;
-  }
-  if (typeof o.label !== 'string' || o.label.length === 0) {
-    return false;
-  }
-  if (o.label.length > CUSTOM_ACTION_LABEL_MAX) {
-    return false;
-  }
-  if (typeof o.icon !== 'string' || o.icon.length === 0) {
-    return false;
-  }
-  if (o.icon.length > CUSTOM_ACTION_ICON_MAX) {
-    return false;
-  }
-  if (typeof o.prompt !== 'string' || o.prompt.length === 0) {
-    return false;
-  }
-  if (o.prompt.length > CUSTOM_ACTION_PROMPT_MAX) {
-    return false;
-  }
-  return true;
-};
-
-const sanitizeCustomActions = (raw: unknown): CustomAction[] | undefined => {
-  if (!Array.isArray(raw)) {
-    return undefined;
-  }
-  const accepted: CustomAction[] = [];
-  for (const candidate of raw) {
-    if (isValidAction(candidate)) {
-      accepted.push({
-        id: candidate.id,
-        label: candidate.label,
-        icon: candidate.icon,
-        prompt: candidate.prompt,
-      });
-    }
-    if (accepted.length >= CUSTOM_ACTION_LIMIT) {
-      break;
-    }
-  }
-  return accepted.length > 0 ? accepted : undefined;
-};
-
 const sanitize = (raw: Partial<CopilotPrefs>): CopilotPrefs => {
   const mode = VALID_MODES.has(raw.encryptionMode as EncryptionMode)
     ? (raw.encryptionMode as EncryptionMode)
@@ -121,24 +52,19 @@ const sanitize = (raw: Partial<CopilotPrefs>): CopilotPrefs => {
     raw.idleTimeoutMin >= 0
       ? raw.idleTimeoutMin
       : DEFAULT_PREFS.idleTimeoutMin;
-  const sysPrompt = safeString(raw.customSystemPrompt, CUSTOM_SYSTEM_PROMPT_MAX);
-  const actions = sanitizeCustomActions(raw.customActions);
   const out: CopilotPrefs = {
     version: 1,
     encryptionMode: mode,
     idleTimeoutMin: idle,
   };
-  if (sysPrompt !== undefined && sysPrompt.trim().length > 0) {
-    out.customSystemPrompt = sysPrompt;
-  }
-  if (actions !== undefined) {
-    out.customActions = actions;
-  }
   // Boolean coercion: any non-true value collapses to false (the
   // default) so corrupted JSON can't accidentally bypass first-run.
   if (raw.hasSeenSettings === true) {
     out.hasSeenSettings = true;
   }
+  // Legacy fields (customSystemPrompt, customActions) are silently
+  // dropped on read. They've moved to file-based config under
+  // MyStyle/SnCopilot/ — see personaFile.ts and customActionsFile.ts.
   return out;
 };
 
@@ -193,35 +119,6 @@ export const setIdleTimeoutMin = async (
 ): Promise<CopilotPrefs> => {
   const current = await readPrefs(deps);
   const next: CopilotPrefs = {...current, idleTimeoutMin: minutes};
-  await writePrefs(deps, next);
-  return next;
-};
-
-// Sets (or clears) the global persona override. Passing null/empty
-// drops the field — the chat falls back to the built-in SYSTEM_PROMPT.
-export const setCustomSystemPrompt = async (
-  deps: PrefsDeps,
-  prompt: string | null,
-): Promise<CopilotPrefs> => {
-  const current = await readPrefs(deps);
-  const next: CopilotPrefs = {...current};
-  if (prompt === null || prompt.trim().length === 0) {
-    delete next.customSystemPrompt;
-  } else {
-    next.customSystemPrompt = prompt;
-  }
-  await writePrefs(deps, next);
-  return next;
-};
-
-// Replaces the user-defined quick action list (not a merge). The
-// writer sanitizes shape + caps to CUSTOM_ACTION_LIMIT regardless.
-export const setCustomActions = async (
-  deps: PrefsDeps,
-  actions: CustomAction[],
-): Promise<CopilotPrefs> => {
-  const current = await readPrefs(deps);
-  const next: CopilotPrefs = {...current, customActions: actions};
   await writePrefs(deps, next);
   return next;
 };

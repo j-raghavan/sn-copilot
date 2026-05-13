@@ -619,27 +619,19 @@ describe('SettingsView — persona + custom-actions save flows', () => {
     expect(findByTestID(tree, 'persona-settings')).toBeDefined();
   });
 
-  it('custom actions Add → Save flow invokes onSaveCustomActions (no crash)', async () => {
+  it('custom actions section is read-only — Reload exists, no CRUD form', async () => {
     const {tree} = renderSettings();
     await act(async () => {
       await flushPromises();
     });
-    act(() => {
-      findByTestID(tree, 'custom-actions-add').props.onPress();
-    });
-    act(() => {
-      findByTestID(tree, 'custom-action-icon').props.onChangeText('📖');
-    });
-    act(() => {
-      findByTestID(tree, 'custom-action-label').props.onChangeText('Glossary');
-    });
-    act(() => {
-      findByTestID(tree, 'custom-action-prompt').props.onChangeText(
-        'Define key terms on this page.',
-      );
-    });
+    // The new file-based UX has a single Reload button, no Add form.
+    expect(findByTestID(tree, 'custom-actions-reload')).toBeDefined();
+    expect(maybeFindByTestID(tree, 'custom-actions-add')).toBeNull();
+    expect(maybeFindByTestID(tree, 'custom-action-form')).toBeNull();
+    // Tap Reload (no-op in this fixture — file doesn't exist —
+    // exercising the onReload wiring without asserting on disk).
     await act(async () => {
-      findByTestID(tree, 'custom-action-save').props.onPress();
+      findByTestID(tree, 'custom-actions-reload').props.onPress();
       await flushPromises();
     });
     expect(findByTestID(tree, 'custom-actions-settings')).toBeDefined();

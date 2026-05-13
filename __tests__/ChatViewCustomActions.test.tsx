@@ -87,10 +87,10 @@ const sampleCustom = (over: Partial<CustomAction> = {}): CustomAction => ({
 describe('ChatView — no custom actions (back-compat)', () => {
   it('renders the built-in 4 actions and only those', () => {
     const {tree} = render();
-    expect(findByTestID(tree, 'chat-action-summarize')).toBeDefined();
-    expect(findByTestID(tree, 'chat-action-explain')).toBeDefined();
-    expect(findByTestID(tree, 'chat-action-clarify')).toBeDefined();
-    expect(findByTestID(tree, 'chat-action-snapshot')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-summarize')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-explain')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-clarify')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-snapshot')).toBeDefined();
   });
 });
 
@@ -101,9 +101,9 @@ describe('ChatView — custom actions', () => {
       sampleCustom({id: 'cust-2', label: 'Risks', icon: '⚠'}),
     ];
     const {tree} = render({customActions: customs});
-    expect(findByTestID(tree, 'chat-action-summarize')).toBeDefined();
-    expect(findByTestID(tree, 'chat-action-cust-1')).toBeDefined();
-    expect(findByTestID(tree, 'chat-action-cust-2')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-summarize')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-cust-1')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-cust-2')).toBeDefined();
     // Both labels visible.
     const text = findAllText(tree).join(' | ');
     expect(text).toContain('Glossary');
@@ -115,7 +115,7 @@ describe('ChatView — custom actions', () => {
     const customs = [sampleCustom({id: 'tax-1', prompt: 'Tax implications?'})];
     const {tree} = render({customActions: customs});
     act(() => {
-      findByTestID(tree, 'chat-action-tax-1').props.onPress();
+      findByTestID(tree, 'chat-suggestion-tax-1').props.onPress();
     });
     await flushSend();
     expect(spy).toHaveBeenCalled();
@@ -129,23 +129,17 @@ describe('ChatView — custom actions', () => {
     const customs = [sampleCustom()];
     const {tree} = render({customActions: customs});
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushSend();
     expect(spy.mock.calls[0][0].userText).toContain('Summarize this page');
     spy.mockRestore();
   });
 
-  it('renders no horizontal-scroll row when customActions is empty array', () => {
-    // Empty array is treated as "no customs" — falls back to the
-    // built-in flex row.
+  it('empty customActions array still renders the 4 built-in cards', () => {
     const {tree} = render({customActions: []});
-    // Action row testID is set on both branches, just one is a
-    // ScrollView. We assert by checking that the snapshot doesn't
-    // contain the scroll-only style.
-    const row = findByTestID(tree, 'chat-action-row');
-    // The View variant has no `horizontal` prop.
-    expect(row.props.horizontal).toBeUndefined();
+    expect(findByTestID(tree, 'chat-suggestion-summarize')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-explain')).toBeDefined();
   });
 });
 
@@ -156,7 +150,7 @@ describe('ChatView — custom system prompt', () => {
       customSystemPrompt: 'You are a precise tutor. Be terse.',
     });
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushSend();
     expect(spy.mock.calls[0][0].systemPrompt).toBe(
@@ -169,7 +163,7 @@ describe('ChatView — custom system prompt', () => {
     const spy = jest.spyOn(fakeProvider, 'send');
     const {tree} = render();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushSend();
     expect(spy.mock.calls[0][0].systemPrompt).toBe(SYSTEM_PROMPT);
@@ -180,7 +174,7 @@ describe('ChatView — custom system prompt', () => {
     const spy = jest.spyOn(fakeProvider, 'send');
     const {tree} = render({customSystemPrompt: '   \n   '});
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushSend();
     expect(spy.mock.calls[0][0].systemPrompt).toBe(SYSTEM_PROMPT);
@@ -219,20 +213,7 @@ describe('ChatView — edge cases', () => {
   });
 });
 
-describe('ChatView — action row layout', () => {
-  it('falls back to the flex row when customActions is undefined', () => {
-    const {tree} = render({customActions: undefined});
-    expect(findByTestID(tree, 'chat-action-row').props.horizontal).toBeUndefined();
-  });
-
-  it('switches to a horizontal scroller once customs are configured', () => {
-    const {tree} = render({
-      customActions: [sampleCustom()],
-    });
-    // ScrollView in test-renderer surfaces `horizontal` as a prop.
-    expect(findByTestID(tree, 'chat-action-row').props.horizontal).toBe(true);
-  });
-
+describe('ChatView — action layout sanity', () => {
   it('no header surprises: settings + new-chat icons remain present with customs', () => {
     const {tree} = render({
       customActions: [sampleCustom()],

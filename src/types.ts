@@ -61,16 +61,6 @@ export type CopilotPrefs = {
   // Minutes of inactivity before the in-memory derived key is wiped.
   // Only meaningful when encryptionMode === 'encrypted'.
   idleTimeoutMin: number;
-  // P2: optional global persona override. When non-empty (after
-  // trim), ChatView sends this verbatim to the model in place of
-  // src/ui/systemPrompt.ts's SYSTEM_PROMPT. The user is responsible
-  // for keeping their override useful — we don't merge or post-fix
-  // the default rules onto custom prompts.
-  customSystemPrompt?: string;
-  // P2: user-defined quick-action templates appended to the 4 built-
-  // ins (Summary / Explain / Clarify / Snapshot). Capped to
-  // CUSTOM_ACTION_LIMIT to keep the action row manageable.
-  customActions?: CustomAction[];
   // First-run onboarding flag. Set to true the first time the user
   // closes Settings. Until then, CopilotPanel routes new users to
   // Settings on boot (instead of the empty ChatView) so they're
@@ -79,6 +69,11 @@ export type CopilotPrefs = {
   // freshly-dropped new key file later does NOT reset this.
   hasSeenSettings?: boolean;
 };
+
+// NOTE: Persona override + custom quick actions are NO LONGER stored
+// in prefs. They live as user-managed plain-text files under
+// MyStyle/SnCopilot/ (system_prompt.txt + custom_actions.txt). See
+// src/storage/personaFile.ts and src/storage/customActionsFile.ts.
 
 // =====================================================================
 // Custom quick actions (Req 3b — saveable named prompt templates).

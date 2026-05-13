@@ -19,6 +19,8 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import CopilotOverlay from '../native/CopilotOverlay';
 import {resolveActiveProvider} from '../storage/activeProvider';
+import {readCustomActions} from '../storage/customActionsFile';
+import {readPersona} from '../storage/personaFile';
 import {setHasSeenSettings} from '../storage/prefs';
 import {useCopilotState} from '../storage/useCopilotState';
 import {
@@ -29,7 +31,7 @@ import {
 } from '../storage/secureFlows';
 import {buildWiringBundle, type WiringBundle} from '../storage/wiring';
 import {setPageContext} from '../scope/pageContext';
-import type {KeyFile} from '../types';
+import type {CustomAction, KeyFile} from '../types';
 import ChatView from './ChatView';
 import SettingsView from './SettingsView';
 import UnlockScreen from './UnlockScreen';
@@ -135,6 +137,38 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
   );
   const {state, prefs, refresh} = useCopilotState(stateDeps);
 
+  // Persona + custom actions are file-based now (read from
+  // MyStyle/SnCopilot/system_prompt.txt and custom_actions.txt). We
+  // keep them as panel state and reload after Settings closes so
+  // user edits flow into ChatView without remount gymnastics.
+  const [persona, setPersona] = useState<string | null>(null);
+  const [customActions, setCustomActions] = useState<CustomAction[]>([]);
+  const reloadFiles = useCallback(async () => {
+    const [p, actions] = await Promise.all([
+      readPersona({io: bundle.io}),
+      readCustomActions({io: bundle.io}),
+    ]);
+    setPersona(p);
+    setCustomActions(actions);
+  }, [bundle.io]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [p, actions] = await Promise.all([
+        readPersona({io: bundle.io}),
+        readCustomActions({io: bundle.io}),
+      ]);
+      if (cancelled) {
+        return;
+      }
+      setPersona(p);
+      setCustomActions(actions);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bundle.io]);
+
   // First-run routing: until the user has closed Settings at least
   // once, boot directly into Settings (where they configure their
   // key / persona / quick actions) instead of an empty ChatView.
@@ -165,18 +199,19 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
   }, [state, prefs.hasSeenSettings, setView]);
 
   // Settings-close handler: flips the first-run flag on the first
-  // close so subsequent boots land on ChatView instead of Settings.
-  // Idempotent — re-calling once seen is set is a cheap no-op write
-  // (sanitize collapses the field).
+  // close, then re-reads the persona + custom-action files so ChatView
+  // picks up any edits the user just made. Both writes are async +
+  // fire-and-forget so the view switch happens instantly.
   const onCloseSettings = useCallback(() => {
     setView('chat');
-    if (prefs.hasSeenSettings !== true) {
-      (async () => {
+    (async () => {
+      if (prefs.hasSeenSettings !== true) {
         await setHasSeenSettings(bundle.prefsDeps, true);
         await refresh();
-      })();
-    }
-  }, [bundle.prefsDeps, prefs.hasSeenSettings, refresh, setView]);
+      }
+      await reloadFiles();
+    })();
+  }, [bundle.prefsDeps, prefs.hasSeenSettings, refresh, reloadFiles, setView]);
 
   const onUnlockAttempt = useCallback(
     async (secret: string) => {
@@ -251,8 +286,8 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
       provider={providerLabel}
       keyFile={activeKeyFile}
       conversationsDeps={bundle.conversationsDeps}
-      customSystemPrompt={prefs.customSystemPrompt}
-      customActions={prefs.customActions}
+      customSystemPrompt={persona ?? undefined}
+      customActions={customActions}
       showLockButton={showLockButton}
       onLockNow={onLockFromChat}
       onSettingsTap={() => setView('settings')}

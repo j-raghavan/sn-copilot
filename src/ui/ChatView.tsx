@@ -690,65 +690,9 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         </View>
       </View>
 
-      {/* Quick action row — built-ins flex to share the row width
-          when no custom actions are configured. Once the user adds
-          custom actions the row switches to a horizontal scroll so
-          the buttons keep a readable width instead of getting
-          squeezed. Disabled when no key file is configured so the
-          user can't tap into the fakeProvider canned-response trap. */}
-      {customActions !== undefined && customActions.length > 0 ? (
-        <ScrollView
-          testID="chat-action-row"
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.quickActionRowScroll}>
-          {mergedActions.map((a) => {
-            const disabled = busy || !hasKeyFile;
-            return (
-              <TouchableOpacity
-                key={a.id}
-                testID={`chat-action-${a.id}`}
-                accessibilityLabel={a.label}
-                onPress={() => onActionTap(a.id)}
-                disabled={disabled}
-                style={[
-                  styles.quickActionBtn,
-                  styles.quickActionBtnFixed,
-                  disabled && styles.btnDisabled,
-                ]}>
-                <Text style={styles.quickActionIcon} numberOfLines={1}>
-                  {a.icon}
-                </Text>
-                <Text style={styles.quickActionLabel} numberOfLines={1}>
-                  {a.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      ) : (
-        <View testID="chat-action-row" style={styles.quickActionRow}>
-          {mergedActions.map((a) => {
-            const disabled = busy || !hasKeyFile;
-            return (
-              <TouchableOpacity
-                key={a.id}
-                testID={`chat-action-${a.id}`}
-                accessibilityLabel={a.label}
-                onPress={() => onActionTap(a.id)}
-                disabled={disabled}
-                style={[styles.quickActionBtn, disabled && styles.btnDisabled]}>
-                <Text style={styles.quickActionIcon} numberOfLines={1}>
-                  {a.icon}
-                </Text>
-                <Text style={styles.quickActionLabel} numberOfLines={1}>
-                  {a.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      )}
+      {/* Quick actions previously sat as a row here. They've moved
+          into the empty-state of the chat scroll (see SuggestionCards
+          below) so the chat area dominates the panel. */}
 
       {/* Privacy caution — matches README: vision providers send the
           screenshot as-is; DeepSeek is text-only so outbound text is
@@ -785,9 +729,11 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
               headline="No API key configured. Copilot needs a key file in MyStyle/SnCopilot/ before the quick actions and chat can talk to a real model."
             />
           ) : messages.length === 0 ? (
-            <Text testID="chat-empty" style={styles.emptyHint}>
-              Tap a quick action above, or ask a question below.
-            </Text>
+            <SuggestionCards
+              actions={mergedActions}
+              disabled={busy}
+              onTap={onActionTap}
+            />
           ) : null}
           {messages.map(m => (
             <ChatBubble
@@ -841,6 +787,50 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   );
 }
 
+
+// Empty-state suggestion grid — shown inside the chat scroll when
+// no messages have landed yet AND a key file is configured. Replaces
+// the old "Tap a quick action above" hint. Tapping a card fires the
+// same onActionTap plumbing as the previous header row. Once the
+// user sends a message the grid vanishes; "New chat" brings it back.
+function SuggestionCards({
+  actions,
+  disabled,
+  onTap,
+}: {
+  actions: ReadonlyArray<{id: string; label: string; icon: string; prompt: string}>;
+  disabled: boolean;
+  onTap: (actionId: string) => void;
+}): React.JSX.Element {
+  return (
+    <View testID="chat-suggestions" style={styles.suggestionsRoot}>
+      <Text style={styles.suggestionsHint}>
+        Tap a suggestion or ask a question below.
+      </Text>
+      <View style={styles.suggestionsGrid}>
+        {actions.map((a) => (
+          <TouchableOpacity
+            key={a.id}
+            testID={`chat-suggestion-${a.id}`}
+            accessibilityLabel={a.label}
+            onPress={() => onTap(a.id)}
+            disabled={disabled}
+            style={[styles.suggestionCard, disabled && styles.btnDisabled]}>
+            <View style={styles.suggestionCardHeader}>
+              <Text style={styles.suggestionIcon}>{a.icon}</Text>
+              <Text style={styles.suggestionLabel} numberOfLines={1}>
+                {a.label}
+              </Text>
+            </View>
+            <Text style={styles.suggestionPrompt} numberOfLines={2}>
+              {a.prompt}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
 
 // Renders the recent-conversations list inline. Tapping an entry
 // hands the conversation back via onSelect (ChatView re-hydrates the
@@ -1070,48 +1060,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#000000',
   },
-  quickActionRow: {
-    flexDirection: 'row',
-    flexWrap: 'nowrap',
-    justifyContent: 'space-between',
-    marginTop: 4,
-    marginBottom: 6,
-    gap: 6,
-  },
-  quickActionRowScroll: {
-    marginTop: 4,
-    marginBottom: 6,
-    gap: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  quickActionBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 8,
-  },
-  // Fixed-width variant used in the horizontal-scroll row so each
-  // button keeps a readable size regardless of how many actions the
-  // user has saved.
-  quickActionBtnFixed: {
-    flex: 0,
-    minWidth: 110,
-  },
-  quickActionIcon: {
-    fontSize: 15,
-    color: '#000000',
-    marginRight: 5,
-  },
-  quickActionLabel: {
-    fontSize: 15,
-    color: '#000000',
-  },
   privacyNote: {
     fontSize: 13,
     color: '#000000',
@@ -1274,4 +1222,49 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: 4,
   },
+  suggestionsRoot: {paddingVertical: 8},
+  suggestionsHint: {
+    fontSize: 14,
+    color: '#000000',
+    fontStyle: 'italic',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  // 2-column grid: each card takes ~half the row with a small gap.
+  // flexBasis works around React Native's lack of CSS grid.
+  suggestionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  suggestionCard: {
+    width: '48%',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 8,
+    marginBottom: 8,
+    minHeight: 72,
+  },
+  suggestionCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  suggestionIcon: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    marginRight: 6,
+    minWidth: 22,
+    textAlign: 'center',
+  },
+  suggestionLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#000000',
+    flex: 1,
+  },
+  suggestionPrompt: {fontSize: 12, color: '#000000', fontStyle: 'italic'},
 });

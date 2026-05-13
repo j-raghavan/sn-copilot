@@ -32,11 +32,11 @@ import {createProviderClient} from '../providers';
 import {buildWiringBundle, type WiringBundle} from '../storage/wiring';
 import {useCopilotState} from '../storage/useCopilotState';
 import {
-  setCustomActions,
-  setCustomSystemPrompt,
-  setEncryptionMode,
-  setIdleTimeoutMin,
-} from '../storage/prefs';
+  readCustomActions,
+  CUSTOM_ACTIONS_PATH,
+} from '../storage/customActionsFile';
+import {readPersona, writePersona} from '../storage/personaFile';
+import {setEncryptionMode, setIdleTimeoutMin} from '../storage/prefs';
 import * as idleTimer from '../storage/idleTimer';
 import {
   changePin,
@@ -53,6 +53,7 @@ import type {
   ProviderId,
   ProviderResolution,
 } from '../types';
+// (CustomAction stays imported for the read-only display below.)
 import CustomActionsSettings from './CustomActionsSettings';
 import EncryptionScreen from './EncryptionScreen';
 import EncryptionSettings from './EncryptionSettings';
@@ -370,21 +371,46 @@ function SettingsViewBody(props: {
     [bundle.prefsDeps, refresh],
   );
 
+  // Persona is file-based now (MyStyle/SnCopilot/system_prompt.txt).
+  // PersonaSettings still hands us a string-or-null on Save; we
+  // round-trip it through the file. After write, re-read so the UI
+  // reflects whatever the sanitiser actually persisted.
+  const [personaDraft, setPersonaDraft] = useState<string | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const current = await readPersona({io: bundle.io});
+      if (cancelled) {
+        return;
+      }
+      setPersonaDraft(current ?? undefined);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bundle.io]);
   const onSavePersona = useCallback(
     async (next: string | null) => {
-      await setCustomSystemPrompt(bundle.prefsDeps, next);
-      await refresh();
+      await writePersona({io: bundle.io}, next);
+      const fresh = await readPersona({io: bundle.io});
+      setPersonaDraft(fresh ?? undefined);
     },
-    [bundle.prefsDeps, refresh],
+    [bundle.io],
   );
 
-  const onSaveCustomActions = useCallback(
-    async (next: CustomAction[]) => {
-      await setCustomActions(bundle.prefsDeps, next);
-      await refresh();
-    },
-    [bundle.prefsDeps, refresh],
-  );
+  // Custom actions are file-based (custom_actions.txt). No CRUD UI —
+  // we just surface a read-only preview + a Reload button so the
+  // user can verify their edits without restarting the plugin.
+  const [actionsPreview, setActionsPreview] = useState<CustomAction[]>([]);
+  const reloadActionsPreview = useCallback(async () => {
+    const list = await readCustomActions({io: bundle.io});
+    setActionsPreview(list);
+  }, [bundle.io]);
+  useEffect(() => {
+    reloadActionsPreview().catch(() => undefined);
+  }, [reloadActionsPreview]);
 
   // Sub-flow renders take over the entire view.
   if (subFlow.kind === 'pin-setup') {
@@ -549,13 +575,14 @@ function SettingsViewBody(props: {
       ) : null}
 
       <PersonaSettings
-        current={prefs.customSystemPrompt}
+        current={personaDraft}
         onSave={onSavePersona}
       />
 
       <CustomActionsSettings
-        current={prefs.customActions}
-        onSave={onSaveCustomActions}
+        actions={actionsPreview}
+        filePath={CUSTOM_ACTIONS_PATH}
+        onReload={reloadActionsPreview}
       />
 
       <View style={styles.section}>

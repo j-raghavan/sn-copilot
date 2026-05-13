@@ -113,7 +113,7 @@ describe('ChatView smart routing — quick actions always attach', () => {
     const spy = jest.spyOn(fakeProvider, 'send');
     const tree = render();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushSend();
     const call = spy.mock.calls[0][0];
@@ -135,7 +135,7 @@ describe('ChatView smart routing — quick actions always attach', () => {
     };
     const tree = render({customActions: [custom]});
     act(() => {
-      findByTestID(tree, 'chat-action-cust-1').props.onPress();
+      findByTestID(tree, 'chat-suggestion-cust-1').props.onPress();
     });
     await flushSend();
     const call = spy.mock.calls[0][0];
@@ -213,7 +213,7 @@ describe('ChatView smart routing — freeform input', () => {
     const spy = jest.spyOn(fakeProvider, 'send');
     const tree = render();
     act(() => {
-      findByTestID(tree, 'chat-action-explain').props.onPress();
+      findByTestID(tree, 'chat-suggestion-explain').props.onPress();
     });
     await flushSend();
     const call = spy.mock.calls[0][0];

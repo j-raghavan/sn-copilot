@@ -158,7 +158,7 @@ describe('ChatView — no persistence (back-compat)', () => {
     const io = createInMemoryFileIo();
     const {tree} = render();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushSendAndPersist();
     expect(io.fs.size).toBe(0);
@@ -172,7 +172,7 @@ describe('ChatView — persistence (plaintext)', () => {
     const {tree} = render({conversationsDeps: deps});
     await flushMicrotasks();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushSendAndPersist();
     expect(io.fs.has(PATH)).toBe(true);
@@ -320,7 +320,7 @@ describe('ChatView — persistence (plaintext)', () => {
     });
     await flushMicrotasks();
     // Messages cleared on screen, empty hint visible.
-    expect(maybeFindByTestID(tree, 'chat-empty')).not.toBeNull();
+    expect(maybeFindByTestID(tree, 'chat-suggestions')).not.toBeNull();
     expect(findAllText(tree).join(' | ')).not.toContain('first convo');
     // History icon still visible (history wasn't wiped).
     expect(maybeFindByTestID(tree, 'chat-history')).not.toBeNull();
@@ -343,7 +343,7 @@ describe('ChatView — persistence (plaintext)', () => {
       findByTestID(tree, 'chat-new').props.onPress();
     });
     act(() => {
-      findByTestID(tree, 'chat-action-explain').props.onPress();
+      findByTestID(tree, 'chat-suggestion-explain').props.onPress();
     });
     await flushSendAndPersist();
     const list = await loadConversations(deps);
@@ -367,8 +367,14 @@ describe('ChatView — persistence (plaintext)', () => {
     });
     const {tree} = render({conversationsDeps: deps});
     await flushMicrotasks();
+    // Suggestion cards are empty-state-only — restored conversations
+    // skip the empty state. Send via the input + send button instead,
+    // which is the only mid-chat send path post-#1.
     act(() => {
-      findByTestID(tree, 'chat-action-clarify').props.onPress();
+      findByTestID(tree, 'chat-input').props.onChangeText('clarify please');
+    });
+    act(() => {
+      findByTestID(tree, 'chat-send').props.onPress();
     });
     await flushSendAndPersist();
     const list = await loadConversations(deps);
@@ -400,7 +406,7 @@ describe('ChatView — persistence (plaintext)', () => {
         findByTestID(tree, 'chat-new').props.onPress();
       });
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       await flushSendAndPersist();
     }
@@ -416,7 +422,7 @@ describe('ChatView — persistence (encrypted)', () => {
     const {tree} = render({conversationsDeps: deps});
     await flushMicrotasks();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushSendAndPersist();
     const bytes = io.fs.get(PATH)!;
@@ -436,7 +442,7 @@ describe('ChatView — persistence (encrypted)', () => {
     const {tree} = render({conversationsDeps: deps});
     await flushMicrotasks();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushSendAndPersist();
     // Disk has no file (the write threw + was caught).
@@ -452,7 +458,7 @@ describe('ChatView — persistence (encrypted)', () => {
     const {tree} = render({conversationsDeps: deps});
     await flushMicrotasks();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushSendAndPersist();
     const parsed = JSON.parse(new TextDecoder().decode(io.fs.get(PATH)!));
@@ -472,7 +478,7 @@ describe('ChatView — restore failure', () => {
       const {tree} = render({conversationsDeps: deps});
       await flushMicrotasks();
       // No history icon, empty hint shown.
-      expect(maybeFindByTestID(tree, 'chat-empty')).not.toBeNull();
+      expect(maybeFindByTestID(tree, 'chat-suggestions')).not.toBeNull();
       expect(maybeFindByTestID(tree, 'chat-history')).toBeNull();
     } finally {
       log.mockRestore();
