@@ -18,7 +18,15 @@
  */
 
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import {resolveActiveProvider} from '../storage/activeProvider';
 import {createProviderClient} from '../providers';
 import {buildWiringBundle, type WiringBundle} from '../storage/wiring';
@@ -117,21 +125,14 @@ export default function SettingsView(
 
   if (bundle === null) {
     return (
-      <ScrollView testID="settings-view" style={styles.root}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Copilot — Settings</Text>
-          <TouchableOpacity
-            testID="settings-close"
-            accessibilityLabel="Close Copilot settings"
-            onPress={onClose}
-            style={styles.closeBtn}>
-            <Text style={styles.closeBtnText}>×</Text>
-          </TouchableOpacity>
-        </View>
-        <Text testID="settings-bootstrap-loading" style={styles.metaLine}>
-          Loading…
-        </Text>
-      </ScrollView>
+      <View testID="settings-view" style={styles.root}>
+        <StickyTitle onClose={onClose} />
+        <ScrollView style={styles.scrollBody}>
+          <Text testID="settings-bootstrap-loading" style={styles.metaLine}>
+            Loading…
+          </Text>
+        </ScrollView>
+      </View>
     );
   }
 
@@ -426,17 +427,9 @@ function SettingsViewBody(props: {
   const showMigrationBanner = state?.kind === 'migrate';
 
   return (
-    <ScrollView testID="settings-view" style={styles.root}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Copilot — Settings</Text>
-        <TouchableOpacity
-          testID="settings-close"
-          accessibilityLabel="Close Copilot settings"
-          onPress={onClose}
-          style={styles.closeBtn}>
-          <Text style={styles.closeBtnText}>×</Text>
-        </TouchableOpacity>
-      </View>
+    <View testID="settings-view" style={styles.root}>
+      <StickyTitle onClose={onClose} />
+      <ScrollView style={styles.scrollBody}>
 
       {showMigrationBanner && state?.kind === 'migrate' ? (
         <MigrationPrompt
@@ -575,7 +568,35 @@ function SettingsViewBody(props: {
           way, avoid opening sensitive pages while Copilot is active.
         </Text>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
+  );
+}
+
+// Fixed title bar shared by both the bundle-loading state and the
+// main settings render. Sits OUTSIDE the body ScrollView so it stays
+// visible while the user scrolls through the long settings tree.
+function StickyTitle({onClose}: {onClose: () => void}): React.JSX.Element {
+  return (
+    <View style={styles.header}>
+      <View style={styles.titleRow}>
+        <Image
+          testID="settings-title-icon"
+          accessibilityLabel="Copilot icon"
+          source={require('../../assets/copilot_icon.png')}
+          style={styles.titleIcon}
+          resizeMode="contain"
+        />
+        <Text style={styles.title}>Settings</Text>
+      </View>
+      <TouchableOpacity
+        testID="settings-close"
+        accessibilityLabel="Close Copilot settings"
+        onPress={onClose}
+        style={styles.closeBtn}>
+        <Text style={styles.closeBtnText}>×</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -692,15 +713,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingTop: 4,
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#000000',
+    // Body ScrollView lives below this header — the header itself is
+    // a static View so it stays put while the body scrolls.
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+  },
+  titleIcon: {
+    width: 28,
+    height: 28,
+    marginRight: 8,
   },
   title: {
     fontSize: 22,
     fontWeight: '600',
     color: '#000000',
+    flexShrink: 1,
   },
+  scrollBody: {flex: 1},
   body: {fontSize: 14, color: '#000000', marginBottom: 12, lineHeight: 20},
   closeBtn: {
     paddingHorizontal: 12,

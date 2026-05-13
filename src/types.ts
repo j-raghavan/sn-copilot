@@ -71,6 +71,13 @@ export type CopilotPrefs = {
   // ins (Summary / Explain / Clarify / Snapshot). Capped to
   // CUSTOM_ACTION_LIMIT to keep the action row manageable.
   customActions?: CustomAction[];
+  // First-run onboarding flag. Set to true the first time the user
+  // closes Settings. Until then, CopilotPanel routes new users to
+  // Settings on boot (instead of the empty ChatView) so they're
+  // greeted by the provider/persona/quick-actions configuration
+  // surface rather than a blank chat. Strictly first-run-ever — a
+  // freshly-dropped new key file later does NOT reset this.
+  hasSeenSettings?: boolean;
 };
 
 // =====================================================================

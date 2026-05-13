@@ -134,6 +134,11 @@ const sanitize = (raw: Partial<CopilotPrefs>): CopilotPrefs => {
   if (actions !== undefined) {
     out.customActions = actions;
   }
+  // Boolean coercion: any non-true value collapses to false (the
+  // default) so corrupted JSON can't accidentally bypass first-run.
+  if (raw.hasSeenSettings === true) {
+    out.hasSeenSettings = true;
+  }
   return out;
 };
 
@@ -217,6 +222,24 @@ export const setCustomActions = async (
 ): Promise<CopilotPrefs> => {
   const current = await readPrefs(deps);
   const next: CopilotPrefs = {...current, customActions: actions};
+  await writePrefs(deps, next);
+  return next;
+};
+
+// One-shot: flips the first-run flag so subsequent boots land on
+// ChatView instead of Settings. Idempotent — re-calling once the
+// flag is set is a cheap no-op write.
+export const setHasSeenSettings = async (
+  deps: PrefsDeps,
+  seen: boolean,
+): Promise<CopilotPrefs> => {
+  const current = await readPrefs(deps);
+  const next: CopilotPrefs = {...current};
+  if (seen) {
+    next.hasSeenSettings = true;
+  } else {
+    delete next.hasSeenSettings;
+  }
   await writePrefs(deps, next);
   return next;
 };

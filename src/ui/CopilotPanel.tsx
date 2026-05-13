@@ -16,9 +16,10 @@
  * conditionally hiding it. Acceptable trade-off; can be revisited
  * by promoting state into this component.
  */
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import CopilotOverlay from '../native/CopilotOverlay';
 import {resolveActiveProvider} from '../storage/activeProvider';
+import {setHasSeenSettings} from '../storage/prefs';
 import {useCopilotState} from '../storage/useCopilotState';
 import {
   lockNow as lockNowFlow,
@@ -134,6 +135,49 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
   );
   const {state, prefs, refresh} = useCopilotState(stateDeps);
 
+  // First-run routing: until the user has closed Settings at least
+  // once, boot directly into Settings (where they configure their
+  // key / persona / quick actions) instead of an empty ChatView.
+  // Decided ONCE per panel mount, after both state and prefs have
+  // loaded from disk — useCopilotState batches those setStates so
+  // the first non-null state already carries the disk-truthy prefs.
+  const firstRouteDecidedRef = useRef(false);
+  useEffect(() => {
+    if (firstRouteDecidedRef.current) {
+      return;
+    }
+    if (state === null) {
+      return;
+    }
+    // Locked / merge / no-key states render their own screens above
+    // the view-switcher; don't make a routing decision yet.
+    if (
+      state.kind === 'locked' ||
+      state.kind === 'merge' ||
+      state.kind === 'no-key'
+    ) {
+      return;
+    }
+    firstRouteDecidedRef.current = true;
+    if (prefs.hasSeenSettings !== true) {
+      setView('settings');
+    }
+  }, [state, prefs.hasSeenSettings, setView]);
+
+  // Settings-close handler: flips the first-run flag on the first
+  // close so subsequent boots land on ChatView instead of Settings.
+  // Idempotent — re-calling once seen is set is a cheap no-op write
+  // (sanitize collapses the field).
+  const onCloseSettings = useCallback(() => {
+    setView('chat');
+    if (prefs.hasSeenSettings !== true) {
+      (async () => {
+        await setHasSeenSettings(bundle.prefsDeps, true);
+        await refresh();
+      })();
+    }
+  }, [bundle.prefsDeps, prefs.hasSeenSettings, refresh, setView]);
+
   const onUnlockAttempt = useCallback(
     async (secret: string) => {
       const r = await unlockFlow(
@@ -193,7 +237,7 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
   }
 
   if (view === 'settings') {
-    return <SettingsView onClose={() => setView('chat')} />;
+    return <SettingsView onClose={onCloseSettings} />;
   }
 
   const activeKeyFile = activeKeyFromState(state);

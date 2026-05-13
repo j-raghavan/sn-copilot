@@ -632,13 +632,12 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       </View>
 
       {/* Context row: scope label on the left, Lock + History +
-          New-chat + Settings icons on the right. Lock (🔒) is only
-          rendered when the parent reports the vault is encrypted +
-          unlocked — keeps "step away from device" one tap from chat
-          without forcing two-level navigation through Settings.
-          History (📚) opens the recent-conversations list inline;
-          New-chat (📝) starts a fresh conversation id; Settings (⚙)
-          opens the settings screen. */}
+          New-chat + Settings icons on the right. Glyphs are
+          Unicode-only (not emoji) so the e-ink display renders them
+          at full ink weight instead of going through the color-
+          emoji pipeline — visibly bolder + larger than the original
+          📚 / 📝 / ⚙ emoji set. Lock (🔒) is only rendered when the
+          parent reports the vault is encrypted + unlocked. */}
       <View style={styles.contextRow}>
         <Text testID="chat-context" style={styles.contextLine}>
           Context: {scopeLabel}
@@ -650,7 +649,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
               accessibilityLabel="Lock Copilot now"
               onPress={onLockNow}
               style={styles.iconBtn}>
-              <Text style={styles.iconBtnText}>🔒</Text>
+              <Text style={styles.iconBtnText}>{'⚿'}</Text>
             </TouchableOpacity>
           ) : null}
           {history.length > 0 ? (
@@ -659,7 +658,10 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
               accessibilityLabel="Show recent conversations"
               onPress={onToggleHistory}
               style={styles.iconBtn}>
-              <Text style={styles.iconBtnText}>📚</Text>
+              {/* Pocket-watch glyph: clearer "history / past chats"
+                  semantic than the books emoji 📚 and renders bolder
+                  on e-ink. */}
+              <Text style={styles.iconBtnText}>{'⏱'}</Text>
             </TouchableOpacity>
           ) : null}
           <TouchableOpacity
@@ -667,14 +669,23 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
             accessibilityLabel="Start a new chat"
             onPress={onNewChat}
             style={styles.iconBtn}>
-            <Text style={styles.iconBtnText}>📝</Text>
+            {/* Pencil glyph for "new entry" — Unicode dingbat, not
+                an emoji, so the e-ink renderer draws a bold stroke
+                rather than a color sprite. */}
+            <Text style={styles.iconBtnText}>{'✎'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             testID="chat-settings"
             accessibilityLabel="Open Copilot settings"
             onPress={onSettingsTap}
             style={styles.iconBtn}>
-            <Text style={styles.iconBtnText}>⚙</Text>
+            {/* Bare gear codepoint (U+2699) — explicitly text
+                presentation. Combined with the bumped fontSize (22)
+                and weight 700 in iconBtnText, this reads boldly on
+                the e-ink panel without going through the color-emoji
+                pipeline that the variation-selector form would
+                trigger. */}
+            <Text style={styles.iconBtnText}>{'⚙'}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1039,15 +1050,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   iconBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    // Bumped from 10/4 to 12/8 + minWidth so the touch target is
+    // bigger and the icon visibly stands out on the e-ink panel.
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderWidth: 1,
     borderColor: '#000000',
     borderRadius: 4,
     marginLeft: 6,
+    minWidth: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   iconBtnText: {
-    fontSize: 18,
+    // Bumped from 18 → 22 + weight 700. The icons are the user's
+    // primary navigation hand-holds; we want them legible without
+    // squinting on a small-format Supernote.
+    fontSize: 22,
+    fontWeight: '700',
     color: '#000000',
   },
   quickActionRow: {

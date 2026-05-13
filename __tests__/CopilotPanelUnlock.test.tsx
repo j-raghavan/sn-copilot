@@ -156,6 +156,23 @@ const seedVault = async (pin: string, files: KeyFile[]) => {
   }
 };
 
+// Prime the prefs file so the panel's first-run detection treats the
+// session as "returning user" and routes to ChatView. Tests that want
+// to exercise the actual first-run flow skip this helper.
+const seedHasSeenSettings = () => {
+  fs.set(
+    '/plugin/copilot-prefs.json',
+    new TextEncoder().encode(
+      JSON.stringify({
+        version: 1,
+        encryptionMode: 'encrypted',
+        idleTimeoutMin: 10,
+        hasSeenSettings: true,
+      }),
+    ),
+  );
+};
+
 const seedTxt = () => {
   fs.set(
     TXT_PATH,
@@ -207,6 +224,7 @@ describe('CopilotPanel — encrypted vault', () => {
 
   it('successful unlock with the right PIN renders ChatView with the active provider', async () => {
     await seedVault('123456', [sampleKey]);
+    seedHasSeenSettings();
     const tree = render();
     await waitFor(tree, () => maybeFindByTestID(tree, 'unlock-screen') !== null);
     act(() => {
@@ -223,6 +241,7 @@ describe('CopilotPanel — encrypted vault', () => {
 
   it('unlocked chat shows the 🔒 lock icon; tapping it relocks → UnlockScreen', async () => {
     await seedVault('123456', [sampleKey]);
+    seedHasSeenSettings();
     const tree = render();
     await waitFor(tree, () => maybeFindByTestID(tree, 'unlock-screen') !== null);
     act(() => {
