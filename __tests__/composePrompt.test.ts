@@ -2,7 +2,7 @@
  * Tests for composeUserText — pure helper that decides whether the
  * page-context transcription gets appended to the user message.
  */
-import {composeUserText} from '../src/ui/composePrompt';
+import {composeUserText} from '../src/scope/composePrompt';
 import type {PageContext} from '../src/scope/pageContext';
 
 const makeCtx = (pageText: string): PageContext => ({

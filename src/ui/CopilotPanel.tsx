@@ -30,13 +30,21 @@ import {
   unlock as unlockFlow,
 } from '../storage/secureFlows';
 import {buildWiringBundle, type WiringBundle} from '../storage/wiring';
-import {setPageContext} from '../scope/pageContext';
-import type {CustomAction, KeyFile} from '../types';
+import {
+  getPageContext,
+  setPageContext,
+  type PageContext,
+} from '../scope/pageContext';
+import {classifyFileKind} from '../scope/fileKind';
+import {redactPii} from '../privacy/redact';
+import {isImageCapableProvider, type CustomAction, type KeyFile} from '../types';
 import ChatView from './ChatView';
+import GrillView from './GrillView';
 import SettingsView from './SettingsView';
 import UnlockScreen from './UnlockScreen';
+import {useProviderClient} from './useProviderClient';
 
-type View = 'chat' | 'settings';
+type View = 'chat' | 'settings' | 'drill';
 
 export type CopilotPanelProps = {
   // Initial scope label shown in the chat header. Currently fixed to
@@ -257,6 +265,27 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
     lockNowFlow();
   }, []);
 
+  // Resolve the page context once on mount so we know whether the
+  // currently-open file is a PDF/EPUB (the substrate Grill Me
+  // targets). Null while we haven't resolved yet OR the capture
+  // failed (capture is best-effort by design).
+  const [pageContext, setPageContextState] =
+    useState<PageContext | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getPageContext()
+      .then((ctx) => {
+        if (cancelled) {
+          return;
+        }
+        setPageContextState(ctx);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // The lock icon only makes sense when the vault is BOTH encrypted
   // AND currently unlocked — there's nothing to lock otherwise.
   const showLockButton =
@@ -280,6 +309,24 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
     ? PROVIDER_LABEL_FOR_ACTIVE[activeKeyFile.provider]
     : PROVIDER_LABEL_FALLBACK;
 
+  // Grill Me availability: needs a configured key file AND the open
+  // file must be PDF/EPUB. .note (handwritten) is excluded for v1 —
+  // OCR noise produces low-quality stems, and the locked plan
+  // restricts v1 to the curated-text substrate.
+  const fileKind =
+    pageContext !== null ? classifyFileKind(pageContext.notePath) : null;
+  const grillAvailable = activeKeyFile !== undefined && fileKind === 'doc';
+
+  if (view === 'drill' && pageContext !== null && activeKeyFile !== undefined) {
+    return (
+      <GrillScreen
+        keyFile={activeKeyFile}
+        pageContext={pageContext}
+        onBack={() => setView('chat')}
+      />
+    );
+  }
+
   return (
     <ChatView
       scopeLabel={initialScopeLabel}
@@ -292,6 +339,42 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
       onLockNow={onLockFromChat}
       onSettingsTap={() => setView('settings')}
       onClose={closeOverlay}
+      onStartDrill={
+        grillAvailable ? () => setView('drill') : undefined
+      }
+    />
+  );
+}
+
+// Small wrapper around GrillView so we can call useProviderClient
+// (a hook) only when we actually render the Grill screen. Keeps the
+// inner-panel render hook order stable across view switches.
+type GrillScreenProps = {
+  keyFile: KeyFile;
+  pageContext: PageContext;
+  onBack: () => void;
+};
+
+function GrillScreen(props: GrillScreenProps): React.JSX.Element {
+  const {keyFile, pageContext, onBack} = props;
+  const {client, apiKey, model} = useProviderClient(keyFile);
+  const attachImage = isImageCapableProvider(keyFile.provider);
+  // Privacy contract parity with ChatView: vision providers ship the
+  // page image, so scrubbing the text-side too would be theatre.
+  // Text-only providers (DeepSeek) don't get an image channel, so the
+  // page text is the only thing on the wire — scrub emails + long
+  // digit runs before any grill module sees it.
+  const sanitizedPageContext: PageContext = attachImage
+    ? pageContext
+    : {...pageContext, pageText: redactPii(pageContext.pageText)};
+  return (
+    <GrillView
+      client={client}
+      apiKey={apiKey}
+      model={model}
+      attachImage={attachImage}
+      pageContext={sanitizedPageContext}
+      onBack={onBack}
     />
   );
 }

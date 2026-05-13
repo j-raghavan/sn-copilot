@@ -58,7 +58,7 @@ import {
   saveConversation,
   type ConversationsDeps,
 } from '../storage/conversations';
-import {composeUserText} from './composePrompt';
+import {composeUserText} from '../scope/composePrompt';
 import {shouldAttachPageContext, type SendSource} from './contextRouting';
 import {buildMarkdownStyles} from './markdownStyles';
 import {markdownToPlainText} from './markdownToPlain';
@@ -83,7 +83,12 @@ const stepUp = (s: FontSize): FontSize =>
 const stepDown = (s: FontSize): FontSize =>
   FONT_SIZES[Math.max(FONT_SIZES.indexOf(s) - 1, 0)];
 
-export type QuickActionId = 'summarize' | 'explain' | 'clarify' | 'snapshot';
+export type QuickActionId =
+  | 'summarize'
+  | 'explain'
+  | 'clarify'
+  | 'snapshot'
+  | 'grill';
 
 export type ChatViewProps = {
   scopeLabel: string;
@@ -115,6 +120,11 @@ export type ChatViewProps = {
   onLockNow?: () => void;
   onSettingsTap: () => void;
   onClose: () => void;
+  // P3 Grill Me. When provided, the Grill action is rendered in the
+  // suggestion grid; tapping it routes through onStartDrill instead
+  // of the standard send pipeline. Undefined → no Grill button
+  // (current file isn't a PDF/EPUB, or no provider configured).
+  onStartDrill?: () => void;
 };
 
 type ChatMessage =
@@ -180,21 +190,32 @@ const toConversationMessages = (
 };
 
 // Quick-action button definitions: id, label, icon, and the canned
-// prompt that appears as a user message when tapped.
+// prompt that appears as a user message when tapped. Labels are
+// verbs — the suggestion-card layout has the width for the full
+// word, so we don't need the old "Summary" abbreviation that the
+// horizontal-row layout required.
 const QUICK_ACTIONS: Array<{
   id: QuickActionId;
   label: string;
   icon: string;
   prompt: string;
 }> = [
-  // Button label is "Summary" so the text fits on one line at the
-  // quick-action button width; the prompt sent to the LLM stays as
-  // "Summarize this page" because that's the verb the model needs.
-  {id: 'summarize', label: 'Summary', icon: '☰', prompt: 'Summarize this page'},
+  {id: 'summarize', label: 'Summarize', icon: '☰', prompt: 'Summarize this page'},
   {id: 'explain', label: 'Explain', icon: '?', prompt: 'Explain this page'},
   {id: 'clarify', label: 'Clarify', icon: '✦', prompt: 'What is unclear?'},
   {id: 'snapshot', label: 'Snapshot', icon: '⊡', prompt: 'Snapshot this page'},
 ];
+
+// Grill Me is only available on PDF/EPUB so it's conditional. The
+// prompt string is empty because tap routing goes through onStartDrill
+// instead of the standard sendUserMessage path — the field is a
+// placeholder to keep the QUICK_ACTIONS shape uniform across entries.
+const GRILL_ACTION = {
+  id: 'grill' as const,
+  label: 'Grill Me',
+  icon: '◎',
+  prompt: '',
+} satisfies {id: QuickActionId; label: string; icon: string; prompt: string};
 
 export default function ChatView(props: ChatViewProps): React.JSX.Element {
   const {
@@ -208,6 +229,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     onLockNow,
     onSettingsTap,
     onClose,
+    onStartDrill,
   } = props;
 
   const {client, apiKey, model} = useProviderClient(keyFile);
@@ -229,17 +251,23 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
 
   // Merge built-ins with user-defined actions. Built-ins always come
   // first so familiar buttons don't migrate as the user adds custom
-  // ones. The user's button row horizontally scrolls when the
-  // combined width overflows.
+  // ones. Grill Me is appended to the built-in row only when
+  // onStartDrill is supplied by the parent (PDF/EPUB + valid provider).
+  // The user's button row horizontally scrolls when the combined
+  // width overflows.
   const mergedActions = useMemo(() => {
+    const builtins = QUICK_ACTIONS.map((a) => ({
+      ...a,
+      kind: 'builtin' as const,
+    }));
+    if (onStartDrill !== undefined) {
+      builtins.push({...GRILL_ACTION, kind: 'builtin' as const});
+    }
     if (customActions === undefined || customActions.length === 0) {
-      return QUICK_ACTIONS.map((a) => ({
-        ...a,
-        kind: 'builtin' as const,
-      }));
+      return builtins;
     }
     return [
-      ...QUICK_ACTIONS.map((a) => ({...a, kind: 'builtin' as const})),
+      ...builtins,
       ...customActions.map((a) => ({
         id: a.id,
         label: a.label,
@@ -248,7 +276,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         kind: 'custom' as const,
       })),
     ];
-  }, [customActions]);
+  }, [customActions, onStartDrill]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState<string>('');
@@ -475,9 +503,15 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   // list. Built-in ids are the closed `QuickActionId` union; custom
   // ids are arbitrary strings minted at save time in Settings.
   // Source = 'quick-action' so the page context is always attached.
+  // Grill is special: it doesn't go through sendUserMessage at all —
+  // it hands off to the drill flow which owns its own state machine.
   const onActionTap = useCallback(
     (actionId: string) => {
       if (!hasKeyFile) {
+        return;
+      }
+      if (actionId === 'grill' && onStartDrill !== undefined) {
+        onStartDrill();
         return;
       }
       const def = mergedActions.find((a) => a.id === actionId);
@@ -486,7 +520,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       }
       sendUserMessage(def.prompt, 'quick-action');
     },
-    [hasKeyFile, mergedActions, sendUserMessage],
+    [hasKeyFile, mergedActions, sendUserMessage, onStartDrill],
   );
 
   // Source = 'freeform' so contextRouting.isPageReferential gates
