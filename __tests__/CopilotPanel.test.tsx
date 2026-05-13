@@ -274,6 +274,88 @@ describe('CopilotPanel — navigation root', () => {
     expect(findByTestID(tree, 'settings-view')).toBeDefined();
   });
 
+  it('setHasSeenSettings rejection is swallowed (no crash, Settings still renders)', async () => {
+    mockListFiles.mockResolvedValueOnce([
+      fileEntry(
+        '/storage/emulated/0/MyStyle/SnCopilot/copilot-key-anthropic.txt',
+      ),
+    ]);
+    mockExists.mockImplementation(async (p: string) =>
+      p.endsWith('copilot-key-anthropic.txt'),
+    );
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('copilot-key-anthropic.txt')) {
+        return fileResp(
+          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-x\n',
+        );
+      }
+      return {ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0)};
+    });
+    // Make the prefs write fail so the inline .catch on setHasSeenSettings
+    // runs (defensive guard — UI must not crash on prefs write failure).
+    const writeFileBase64 = jest.requireMock('../src/native/CopilotOverlay')
+      .default.writeFileBase64 as jest.Mock;
+    writeFileBase64.mockImplementation(async () => ({
+      success: false,
+      code: 'WRITE_FAILED',
+      message: 'fixture',
+    }));
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<CopilotPanel />);
+      await flushPromises();
+    });
+    liveTrees.push(tree);
+    await waitForText(tree, 'Settings', 20);
+    expect(findByTestID(tree, 'settings-view')).toBeDefined();
+  });
+
+  it('flips hasSeenSettings on FIRST SHOW (not on close), so a host-level close still records the visit', async () => {
+    // No prefs file → first-run. Seed a single key file so the panel
+    // reaches a routable state instead of the no-key checklist.
+    mockListFiles.mockResolvedValueOnce([
+      fileEntry(
+        '/storage/emulated/0/MyStyle/SnCopilot/copilot-key-anthropic.txt',
+      ),
+    ]);
+    mockExists.mockImplementation(async (p: string) =>
+      p.endsWith('copilot-key-anthropic.txt'),
+    );
+    let prefsWritten: string | null = null;
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('copilot-key-anthropic.txt')) {
+        return fileResp(
+          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-x\n',
+        );
+      }
+      return {ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0)};
+    });
+    // Track the writeFileBase64 calls; setHasSeenSettings writes the
+    // prefs file with hasSeenSettings:true.
+    const writeFileBase64 = jest.requireMock('../src/native/CopilotOverlay')
+      .default.writeFileBase64 as jest.Mock;
+    writeFileBase64.mockImplementation(async (path: string, b64: string) => {
+      if (path.endsWith('.copilot-prefs.json')) {
+        prefsWritten = Buffer.from(b64, 'base64').toString('utf-8');
+      }
+      return {success: true, code: 'OK', message: 'fixture'};
+    });
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<CopilotPanel />);
+      await flushPromises();
+    });
+    liveTrees.push(tree);
+    await waitForText(tree, 'Settings', 20);
+    // The flag write happens immediately on SHOW — no need to tap
+    // the × button. Verify the write landed.
+    await act(async () => {
+      await flushPromises();
+    });
+    expect(prefsWritten).not.toBeNull();
+    expect(prefsWritten ?? '').toContain('"hasSeenSettings":true');
+  });
+
   it('shows the resolved provider label when discovery returns one valid file', async () => {
     mockListFiles.mockResolvedValueOnce([
       fileEntry(

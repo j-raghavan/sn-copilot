@@ -240,6 +240,71 @@ describe('ChatView — persistence (plaintext)', () => {
     expect(text).toContain('Recent chats');
   });
 
+  it('history-touch failure is swallowed (chat keeps working)', async () => {
+    const io = createInMemoryFileIo();
+    const deps = makeDeps(io);
+    await saveConversation(deps, {
+      id: 'A',
+      createdAt: 100,
+      updatedAt: 100,
+      messages: [{id: 'mA', role: 'user', text: 'first', createdAt: 100}],
+    });
+    const {tree} = render({conversationsDeps: deps});
+    await flushMicrotasks();
+    // Make subsequent saves fail so the touch path hits its catch.
+    io.writeBytes = async () => {
+      throw new Error('write failed');
+    };
+    act(() => {
+      findByTestID(tree, 'chat-history').props.onPress();
+    });
+    await flushMicrotasks();
+    act(() => {
+      findByTestID(tree, 'chat-history-item-A').props.onPress();
+    });
+    await flushMicrotasks();
+    // Chat surface still rendered, no crash.
+    expect(findByTestID(tree, 'chat-view')).toBeDefined();
+  });
+
+  it('tapping a history item bumps its updatedAt so it floats to list[0]', async () => {
+    const io = createInMemoryFileIo();
+    const deps = makeDeps(io);
+    // Two conversations: A older, B newer. B is list[0] on restore.
+    await saveConversation(deps, {
+      id: 'older',
+      createdAt: 100,
+      updatedAt: 100,
+      messages: [
+        {id: 'mA', role: 'user', text: 'older one', createdAt: 100},
+      ],
+    });
+    await saveConversation(deps, {
+      id: 'newer',
+      createdAt: 200,
+      updatedAt: 200,
+      messages: [
+        {id: 'mB', role: 'user', text: 'newer one', createdAt: 200},
+      ],
+    });
+    const {tree} = render({conversationsDeps: deps});
+    await flushMicrotasks();
+    // Open history, tap the OLDER one — we want to verify the next
+    // reopen lands here, not on the newest.
+    act(() => {
+      findByTestID(tree, 'chat-history').props.onPress();
+    });
+    await flushMicrotasks();
+    act(() => {
+      findByTestID(tree, 'chat-history-item-older').props.onPress();
+    });
+    await flushMicrotasks();
+    // After the touch, the older conv now sits at list[0].
+    const list = await loadConversations(deps);
+    expect(list[0].id).toBe('older');
+    expect(list[0].updatedAt).toBeGreaterThan(200);
+  });
+
   it('tapping a history item loads its conversation into the chat scroll', async () => {
     const io = createInMemoryFileIo();
     const deps = makeDeps(io);

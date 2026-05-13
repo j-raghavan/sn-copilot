@@ -560,9 +560,11 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   }, []);
 
   // Loads a saved conversation into the chat view, replacing whatever
-  // is currently on screen. Doesn't mutate disk — switching is
-  // read-only until the user sends into it, at which point the
-  // existing conversation gets upserted by id.
+  // is currently on screen, and bumps its updatedAt so it floats to
+  // list[0]. On the next reopen the user lands back on the chat they
+  // were viewing — without the bump, list[0] would always be the
+  // most-recently-EDITED conversation, which can differ from what
+  // the user was last actively viewing.
   const onSelectConversation = useCallback(
     (conv: Conversation) => {
       setMessages(toChatMessages(conv.messages));
@@ -571,8 +573,19 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       setShowHistory(false);
       setInput('');
       setCopyFeedback(null);
+      if (conversationsDeps === undefined) {
+        return;
+      }
+      const touched: Conversation = {...conv, updatedAt: Date.now()};
+      saveConversation(conversationsDeps, touched)
+        .then((list) => setHistory(list))
+        .catch((e) =>
+          debugLog(
+            `[COPILOT_CHAT] history touch failed: ${(e as Error).message}`,
+          ),
+        );
     },
-    [],
+    [conversationsDeps],
   );
 
   return (
@@ -649,7 +662,10 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
               accessibilityLabel="Lock Copilot now"
               onPress={onLockNow}
               style={styles.iconBtn}>
-              <Text style={styles.iconBtnText}>{'⚿'}</Text>
+              {/* Key glyph: ⚿ (squared key) reads as a lock at e-ink
+                  scale; 🔑 is unambiguously a key, matching the rest
+                  of the "lock the vault" UX. */}
+              <Text style={styles.iconBtnText}>{'🔑'}</Text>
             </TouchableOpacity>
           ) : null}
           {history.length > 0 ? (

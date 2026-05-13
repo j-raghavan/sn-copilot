@@ -169,12 +169,13 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
     };
   }, [bundle.io]);
 
-  // First-run routing: until the user has closed Settings at least
-  // once, boot directly into Settings (where they configure their
-  // key / persona / quick actions) instead of an empty ChatView.
-  // Decided ONCE per panel mount, after both state and prefs have
-  // loaded from disk — useCopilotState batches those setStates so
-  // the first non-null state already carries the disk-truthy prefs.
+  // First-run routing: until the user has SEEN Settings once, boot
+  // directly into Settings instead of an empty ChatView. The flag
+  // flips THE MOMENT we route to Settings — not on close — so
+  // subsequent opens land on ChatView even when the user closes the
+  // whole overlay via the host sidebar (instead of tapping × on
+  // Settings). Decided ONCE per panel mount, after both state and
+  // prefs have loaded from disk.
   const firstRouteDecidedRef = useRef(false);
   useEffect(() => {
     if (firstRouteDecidedRef.current) {
@@ -195,23 +196,22 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
     firstRouteDecidedRef.current = true;
     if (prefs.hasSeenSettings !== true) {
       setView('settings');
+      // Flip the flag IMMEDIATELY (fire-and-forget). Whether the user
+      // closes via × or via the host sidebar, the next boot lands on
+      // ChatView. Refresh after to mirror disk back into useCopilotState.
+      setHasSeenSettings(bundle.prefsDeps, true)
+        .then(() => refresh())
+        .catch(() => undefined);
     }
-  }, [state, prefs.hasSeenSettings, setView]);
+  }, [state, prefs.hasSeenSettings, setView, bundle.prefsDeps, refresh]);
 
-  // Settings-close handler: flips the first-run flag on the first
-  // close, then re-reads the persona + custom-action files so ChatView
-  // picks up any edits the user just made. Both writes are async +
-  // fire-and-forget so the view switch happens instantly.
+  // Settings-close handler: just switches view + re-reads the persona
+  // + custom-action files so ChatView picks up any edits. The first-
+  // run flag is flipped on show, not here, so this stays trivial.
   const onCloseSettings = useCallback(() => {
     setView('chat');
-    (async () => {
-      if (prefs.hasSeenSettings !== true) {
-        await setHasSeenSettings(bundle.prefsDeps, true);
-        await refresh();
-      }
-      await reloadFiles();
-    })();
-  }, [bundle.prefsDeps, prefs.hasSeenSettings, refresh, reloadFiles, setView]);
+    reloadFiles().catch(() => undefined);
+  }, [reloadFiles, setView]);
 
   const onUnlockAttempt = useCallback(
     async (secret: string) => {
