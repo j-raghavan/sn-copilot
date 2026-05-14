@@ -16,6 +16,14 @@
  * request so its responses always reference the IDs generateDeck
  * actually used (which are renamespaced under the deck id).
  */
+// Fake timers prevent the 60-120s abort timeouts inside runWithTimeout
+// from queueing real timers that survive the test (and contaminate
+// sibling test files in CI by keeping React's scheduler alive past
+// Jest teardown — observed as "Can't access .root on unmounted test
+// renderer" failures in CopilotPanelUnlock when running with
+// --coverage).
+jest.useFakeTimers();
+
 import React from 'react';
 import {act, create, type ReactTestRenderer} from 'react-test-renderer';
 import GrillView from '../src/ui/GrillView';
@@ -153,8 +161,29 @@ const flush = async (): Promise<void> => {
   });
 };
 
+// Track every tree created via renderGrill so afterEach can unmount
+// them. Without this, components held open by deliberately-unresolved
+// holdable provider promises stay in React's scheduler and the
+// background pipeline keeps queuing setTimeouts on entry to the next
+// test — which is what was breaking sibling test files on CI.
+const liveTrees: ReactTestRenderer[] = [];
+
 beforeEach(() => {
   guardTesting.reset();
+});
+
+afterEach(() => {
+  while (liveTrees.length > 0) {
+    const t = liveTrees.pop()!;
+    try {
+      act(() => {
+        t.unmount();
+      });
+    } catch {
+      // Tree may already be unmounted (some tests unmount explicitly).
+    }
+  }
+  jest.clearAllTimers();
 });
 
 const renderGrill = (
@@ -176,6 +205,7 @@ const renderGrill = (
       />,
     );
   });
+  liveTrees.push(tree);
   return {tree, onBack};
 };
 

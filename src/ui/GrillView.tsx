@@ -77,16 +77,41 @@ export type GrillViewProps = {
   onBack: () => void;
 };
 
+// Runs an awaited operation with both a per-call timeout AND an
+// optional outer signal that, when aborted, cancels the in-flight
+// operation. Two abort sources funnel into the inner controller:
+//
+//   1. setTimeout(timeoutMs) — caps any single operation.
+//   2. outerSignal abort — propagated from the per-generation
+//      AbortController so Grill again / Retry can cancel network
+//      work *and* free quota immediately, not just discard the result
+//      post-await.
+//
+// The listener pattern is best-effort on Hermes (see CLAUDE.md memory
+// "AbortSignal 'abort' listeners don't fire reliably"); on Node /
+// most desktop runtimes it fires synchronously and the fetch sees
+// the abort propagate. On Hermes, the synchronous pre-check still
+// catches the "already aborted at call time" case, which is what
+// matters most for the Grill again → cancel-in-flight scenario.
 const runWithTimeout = async <T,>(
   timeoutMs: number,
   run: (signal: AbortSignal) => Promise<T>,
+  outerSignal?: AbortSignal,
 ): Promise<T> => {
   const ctl = new AbortController();
+  // Pre-check: if the caller's signal was already aborted before we
+  // got here, fail fast and don't even kick the fetch.
+  if (outerSignal?.aborted) {
+    ctl.abort();
+  }
+  const onOuterAbort = (): void => ctl.abort();
+  outerSignal?.addEventListener('abort', onOuterAbort);
   const timeoutId = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     return await run(ctl.signal);
   } finally {
     clearTimeout(timeoutId);
+    outerSignal?.removeEventListener('abort', onOuterAbort);
   }
 };
 
@@ -125,15 +150,18 @@ const runGeneratePipeline = async (
   } = args;
   let deck: Deck;
   try {
-    deck = await runWithTimeout(GENERATE_TIMEOUT_MS, (signal) =>
-      generateDeck({
-        client,
-        apiKey,
-        model,
-        pageContext,
-        signal,
-        attachImage,
-      }),
+    deck = await runWithTimeout(
+      GENERATE_TIMEOUT_MS,
+      (signal) =>
+        generateDeck({
+          client,
+          apiKey,
+          model,
+          pageContext,
+          signal,
+          attachImage,
+        }),
+      generationSignal,
     );
   } catch (e) {
     return {ok: false, error: e};
@@ -423,7 +451,6 @@ export default function GrillView(props: GrillViewProps): React.JSX.Element {
         <DoneScreen
           deck={deck}
           answers={answers}
-          judgeResult={judgeResult}
           swappedCards={swappedCards}
           onGrillAgain={() => grillAgain(deck)}
         />
@@ -671,15 +698,18 @@ const judgeAndRegenerateInBackground = async (
 ): Promise<void> => {
   let judgeResult: JudgeResult;
   try {
-    judgeResult = await runWithTimeout(JUDGE_TIMEOUT_MS, (signal) =>
-      judgeDeck({
-        client,
-        apiKey,
-        model,
-        sourcePageText: pageContext.pageText,
-        deck,
-        signal,
-      }),
+    judgeResult = await runWithTimeout(
+      JUDGE_TIMEOUT_MS,
+      (signal) =>
+        judgeDeck({
+          client,
+          apiKey,
+          model,
+          sourcePageText: pageContext.pageText,
+          deck,
+          signal,
+        }),
+      generationSignal,
     );
   } catch (e) {
     infoLog('[GRILL] judge failed', String(e));
@@ -710,6 +740,7 @@ const judgeAndRegenerateInBackground = async (
             signal,
             attachImage,
           }),
+        generationSignal,
       );
       if (!isAlive() || generationSignal.aborted) {
         return;
