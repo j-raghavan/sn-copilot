@@ -307,14 +307,41 @@ const setupEncryptedAndUnlock = async () => {
   return {tree, onClose};
 };
 
+// Helper: from the post-unlock main Settings page, drill into the
+// EncryptionScreen sub-flow so the action buttons (Lock / Change PIN
+// / Disable / Reset / idle pills) are findable. Encapsulates the
+// nav-row tap so every action test reads cleanly.
+const openEncryptionScreen = (tree: ReactTestRenderer): void => {
+  act(() => {
+    findByTestID(tree, 'encryption-nav-open').props.onPress();
+  });
+};
+
 describe('SettingsView — encrypted+unlocked actions', () => {
-  it('renders the encrypted+unlocked encryption section', async () => {
+  it('main Settings shows a nav row; sub-screen shows the encrypted block', async () => {
     const {tree} = await setupEncryptedAndUnlock();
+    // On main Settings, the dense action list lives behind a nav row.
+    expect(findByTestID(tree, 'encryption-nav-open')).toBeDefined();
+    expect(maybeFindByTestID(tree, 'encryption-settings-encrypted')).toBeNull();
+    openEncryptionScreen(tree);
+    expect(findByTestID(tree, 'encryption-screen')).toBeDefined();
     expect(findByTestID(tree, 'encryption-settings-encrypted')).toBeDefined();
+  });
+
+  it('Back from the encryption sub-screen returns to the main Settings nav row', async () => {
+    const {tree} = await setupEncryptedAndUnlock();
+    openEncryptionScreen(tree);
+    expect(findByTestID(tree, 'encryption-screen')).toBeDefined();
+    act(() => {
+      findByTestID(tree, 'encryption-screen-back').props.onPress();
+    });
+    expect(maybeFindByTestID(tree, 'encryption-screen')).toBeNull();
+    expect(findByTestID(tree, 'encryption-nav-open')).toBeDefined();
   });
 
   it('Lock now wipes session and triggers onClose', async () => {
     const {tree, onClose} = await setupEncryptedAndUnlock();
+    openEncryptionScreen(tree);
     act(() => {
       findByTestID(tree, 'encryption-lock-now').props.onPress();
     });
@@ -323,6 +350,7 @@ describe('SettingsView — encrypted+unlocked actions', () => {
 
   it('Change PIN flow updates the vault key', async () => {
     const {tree} = await setupEncryptedAndUnlock();
+    openEncryptionScreen(tree);
     act(() => {
       findByTestID(tree, 'encryption-change-pin').props.onPress();
     });
@@ -336,14 +364,15 @@ describe('SettingsView — encrypted+unlocked actions', () => {
       findByTestID(tree, 'pin-submit').props.onPress();
       await flushPromises();
     });
-    // Vault file is still there; we won't decrypt it inside the test
-    // (kdf is slow) — just verify we returned to the main settings.
+    // After PIN setup completes the sub-flow resets to idle so we're
+    // back on the main Settings page (not in the encryption screen).
     expect(maybeFindByTestID(tree, 'pin-setup')).toBeNull();
-    expect(findByTestID(tree, 'encryption-settings-encrypted')).toBeDefined();
+    expect(findByTestID(tree, 'encryption-nav-open')).toBeDefined();
   });
 
   it('Disable encryption writes back plaintext + flips prefs to plaintext', async () => {
     const {tree} = await setupEncryptedAndUnlock();
+    openEncryptionScreen(tree);
     await act(async () => {
       findByTestID(tree, 'encryption-disable').props.onPress();
       await flushPromises();
@@ -351,13 +380,18 @@ describe('SettingsView — encrypted+unlocked actions', () => {
     await act(async () => {
       await flushPromises();
     });
-    // Vault gone, plaintext written.
+    // Vault gone, plaintext written. The sub-screen also auto-exited
+    // back to the main Settings.
     expect(fs.has(VAULT_PATH)).toBe(false);
     expect(fs.has(TXT_PATH)).toBe(true);
+    // The action row's encryption button now offers the
+    // "Encrypt" CTA (encryptionMode is plaintext post-disable).
+    expect(findByTestID(tree, 'encryption-nav-open')).toBeDefined();
   });
 
   it('Reset deletes the vault and returns to no-key', async () => {
     const {tree} = await setupEncryptedAndUnlock();
+    openEncryptionScreen(tree);
     await act(async () => {
       findByTestID(tree, 'encryption-reset').props.onPress();
       await flushPromises();
@@ -366,11 +400,15 @@ describe('SettingsView — encrypted+unlocked actions', () => {
       await flushPromises();
     });
     expect(fs.has(VAULT_PATH)).toBe(false);
-    expect(findByTestID(tree, 'encryption-settings-plaintext')).toBeDefined();
+    // Auto-return-to-idle: the encryption sub-screen exits; the
+    // action row's encryption button is back at the plaintext label
+    // (no vault, no plaintext key, mode is 'undecided').
+    expect(findByTestID(tree, 'encryption-nav-open')).toBeDefined();
   });
 
   it('Idle-timeout pill press persists the new value', async () => {
     const {tree} = await setupEncryptedAndUnlock();
+    openEncryptionScreen(tree);
     await act(async () => {
       findByTestID(tree, 'encryption-idle-30').props.onPress();
       await flushPromises();
@@ -440,6 +478,11 @@ describe('SettingsView — disable encryption with optional fields', () => {
       findByTestID(tree, 'cleanup-delete').props.onPress();
       await flushPromises();
     });
+    // Drill into the encryption sub-screen so the Disable button is
+    // findable.
+    act(() => {
+      findByTestID(tree, 'encryption-nav-open').props.onPress();
+    });
     await act(async () => {
       findByTestID(tree, 'encryption-disable').props.onPress();
       await flushPromises();
@@ -480,6 +523,10 @@ describe('SettingsView — disable encryption with optional fields', () => {
       await flushPromises();
     });
     // Now disable; the write-back should re-emit both optional fields.
+    // Drill into the encryption sub-screen first.
+    act(() => {
+      findByTestID(tree, 'encryption-nav-open').props.onPress();
+    });
     await act(async () => {
       findByTestID(tree, 'encryption-disable').props.onPress();
       await flushPromises();

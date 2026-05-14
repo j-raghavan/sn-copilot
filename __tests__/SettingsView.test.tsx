@@ -581,3 +581,70 @@ describe('SettingsView — unmount safety', () => {
     }
   });
 });
+
+describe('SettingsView — persona + custom-actions save flows', () => {
+  beforeEach(() => {
+    mockListFiles.mockResolvedValueOnce(null);
+  });
+
+  it('renders PersonaSettings and CustomActionsSettings sections', async () => {
+    const {tree} = renderSettings();
+    await act(async () => {
+      await flushPromises();
+    });
+    expect(findByTestID(tree, 'persona-settings')).toBeDefined();
+    expect(findByTestID(tree, 'custom-actions-settings')).toBeDefined();
+  });
+
+  it('top action row collapses Refresh / Test / Encryption into one line', async () => {
+    const {tree} = renderSettings();
+    await act(async () => {
+      await flushPromises();
+    });
+    expect(findByTestID(tree, 'settings-action-row')).toBeDefined();
+    expect(findByTestID(tree, 'settings-refresh')).toBeDefined();
+    expect(findByTestID(tree, 'settings-test-connection')).toBeDefined();
+    expect(findByTestID(tree, 'encryption-nav-open')).toBeDefined();
+  });
+
+  it('persona save flow invokes the onSavePersona closure (no crash)', async () => {
+    const {tree} = renderSettings();
+    await act(async () => {
+      await flushPromises();
+    });
+    // Type a draft so Save enables, then tap.
+    act(() => {
+      findByTestID(tree, 'persona-input').props.onChangeText(
+        'You are a careful tutor.',
+      );
+    });
+    await act(async () => {
+      findByTestID(tree, 'persona-save').props.onPress();
+      await flushPromises();
+    });
+    // Reaching this point means the SettingsView.onSavePersona closure
+    // ran (it would have thrown if wiring was broken). We're not
+    // asserting persisted state here because the writeFileBase64 mock
+    // returns success but doesn't round-trip — the SettingsView-level
+    // test focuses on the call wiring; round-trip lives in prefs.test.ts.
+    expect(findByTestID(tree, 'persona-settings')).toBeDefined();
+  });
+
+  it('custom actions section is read-only — Reload exists, no CRUD form', async () => {
+    const {tree} = renderSettings();
+    await act(async () => {
+      await flushPromises();
+    });
+    // The new file-based UX has a single Reload button, no Add form.
+    expect(findByTestID(tree, 'custom-actions-reload')).toBeDefined();
+    expect(maybeFindByTestID(tree, 'custom-actions-add')).toBeNull();
+    expect(maybeFindByTestID(tree, 'custom-action-form')).toBeNull();
+    // Tap Reload (no-op in this fixture — file doesn't exist —
+    // exercising the onReload wiring without asserting on disk).
+    await act(async () => {
+      findByTestID(tree, 'custom-actions-reload').props.onPress();
+      await flushPromises();
+    });
+    expect(findByTestID(tree, 'custom-actions-settings')).toBeDefined();
+  });
+});

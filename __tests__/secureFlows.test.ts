@@ -31,6 +31,11 @@ import {
   setActiveKeys,
 } from '../src/storage/sessionKey';
 import {
+  __testing__ as derivedKeyTesting,
+  getDerivedKey,
+  hasDerivedKey,
+} from '../src/storage/derivedKey';
+import {
   changePin,
   disableEncryption,
   encryptInitial,
@@ -68,6 +73,7 @@ const makeDeps = () => {
 
 beforeEach(() => {
   sessionTesting.reset();
+  derivedKeyTesting.reset();
 });
 
 describe('encryptInitial', () => {
@@ -225,10 +231,11 @@ describe('resetVault', () => {
 });
 
 describe('lockNow / isInsecure', () => {
-  it('lockNow wipes session', () => {
+  it('lockNow wipes session and derived key', () => {
     setActiveKeys([f('anthropic')]);
     lockNow();
     expect(getActiveKeys()).toBeNull();
+    expect(hasDerivedKey()).toBe(false);
   });
 
   it.each(['plaintext' as const, 'undecided' as const])(
@@ -246,5 +253,81 @@ describe('lockNow / isInsecure', () => {
     const {deps} = makeDeps();
     await writePrefs(deps.prefs, {...DEFAULT_PREFS, encryptionMode: 'encrypted'});
     expect((await readPrefs(deps.prefs)).encryptionMode).toBe('encrypted');
+  });
+});
+
+describe('secureFlows — derivedKey integration', () => {
+  it('encryptInitial populates the derived key', async () => {
+    const {deps} = makeDeps();
+    expect(hasDerivedKey()).toBe(false);
+    await encryptInitial(deps, '123456', [f('anthropic')]);
+    expect(hasDerivedKey()).toBe(true);
+    expect(getDerivedKey()!.length).toBe(32);
+  });
+
+  it('unlock populates the derived key on ok', async () => {
+    const {deps} = makeDeps();
+    await encryptInitial(deps, '123456', [f('anthropic')]);
+    sessionTesting.reset();
+    derivedKeyTesting.reset();
+    const r = await unlock(deps, '123456');
+    expect(r.kind).toBe('ok');
+    expect(hasDerivedKey()).toBe(true);
+  });
+
+  it('unlock does not set the derived key on wrong-pin', async () => {
+    const {deps} = makeDeps();
+    await encryptInitial(deps, '123456', [f('anthropic')]);
+    sessionTesting.reset();
+    derivedKeyTesting.reset();
+    const r = await unlock(deps, 'nope');
+    expect(r.kind).toBe('wrong-pin');
+    expect(hasDerivedKey()).toBe(false);
+  });
+
+  it('unlock strips key from the returned shape', async () => {
+    const {deps} = makeDeps();
+    await encryptInitial(deps, '123456', [f('anthropic')]);
+    sessionTesting.reset();
+    derivedKeyTesting.reset();
+    const r = await unlock(deps, '123456');
+    // ok shape is {kind:'ok', files} — no `key` leaked to the UI.
+    expect(r).not.toHaveProperty('key');
+  });
+
+  it('changePin refreshes the derived key', async () => {
+    const {deps} = makeDeps();
+    await encryptInitial(deps, '123456', [f('openai')]);
+    const before = getDerivedKey();
+    await changePin(deps, '654321', [f('openai')]);
+    const after = getDerivedKey();
+    expect(after).not.toBeNull();
+    expect(Buffer.from(after!).equals(Buffer.from(before!))).toBe(false);
+  });
+
+  it('mergeIntoVault refreshes the derived key', async () => {
+    const {deps} = makeDeps();
+    await encryptInitial(deps, '123456', [f('anthropic')]);
+    const before = getDerivedKey();
+    await mergeIntoVault(deps, '123456', [f('anthropic')], [f('openai')]);
+    const after = getDerivedKey();
+    expect(after).not.toBeNull();
+    expect(Buffer.from(after!).equals(Buffer.from(before!))).toBe(false);
+  });
+
+  it('disableEncryption clears the derived key', async () => {
+    const {deps} = makeDeps();
+    await encryptInitial(deps, '123456', [f('openai')]);
+    expect(hasDerivedKey()).toBe(true);
+    await disableEncryption(deps, async () => {}, [f('openai')]);
+    expect(hasDerivedKey()).toBe(false);
+  });
+
+  it('resetVault clears the derived key', async () => {
+    const {deps} = makeDeps();
+    await encryptInitial(deps, '123456', [f('openai')]);
+    expect(hasDerivedKey()).toBe(true);
+    await resetVault(deps);
+    expect(hasDerivedKey()).toBe(false);
   });
 });

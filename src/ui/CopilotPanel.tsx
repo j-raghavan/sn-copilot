@@ -16,19 +16,35 @@
  * conditionally hiding it. Acceptable trade-off; can be revisited
  * by promoting state into this component.
  */
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import CopilotOverlay from '../native/CopilotOverlay';
 import {resolveActiveProvider} from '../storage/activeProvider';
+import {readCustomActions} from '../storage/customActionsFile';
+import {readPersona} from '../storage/personaFile';
+import {setHasSeenSettings} from '../storage/prefs';
 import {useCopilotState} from '../storage/useCopilotState';
-import {mergeIntoVault, unlock as unlockFlow, resetVault} from '../storage/secureFlows';
+import {
+  lockNow as lockNowFlow,
+  mergeIntoVault,
+  resetVault,
+  unlock as unlockFlow,
+} from '../storage/secureFlows';
 import {buildWiringBundle, type WiringBundle} from '../storage/wiring';
-import {setPageContext} from '../scope/pageContext';
-import type {KeyFile} from '../types';
+import {
+  getPageContext,
+  setPageContext,
+  type PageContext,
+} from '../scope/pageContext';
+import {classifyFileKind} from '../scope/fileKind';
+import {redactPii} from '../privacy/redact';
+import {isImageCapableProvider, type CustomAction, type KeyFile} from '../types';
 import ChatView from './ChatView';
+import GrillView from './GrillView';
 import SettingsView from './SettingsView';
 import UnlockScreen from './UnlockScreen';
+import {useProviderClient} from './useProviderClient';
 
-type View = 'chat' | 'settings';
+type View = 'chat' | 'settings' | 'drill';
 
 export type CopilotPanelProps = {
   // Initial scope label shown in the chat header. Currently fixed to
@@ -79,7 +95,8 @@ export default function CopilotPanel(
   }, []);
 
   // While the wiring bundle resolves (one host call) render today's
-  // chat fallback so first paint isn't a spinner.
+  // chat fallback so first paint isn't a spinner. No persistence
+  // wiring yet — conversationsDeps comes from the bundle.
   if (bundle === null) {
     return (
       <ChatView
@@ -126,7 +143,83 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
     }),
     [bundle],
   );
-  const {state, refresh} = useCopilotState(stateDeps);
+  const {state, prefs, refresh} = useCopilotState(stateDeps);
+
+  // Persona + custom actions are file-based now (read from
+  // MyStyle/SnCopilot/system_prompt.txt and custom_actions.txt). We
+  // keep them as panel state and reload after Settings closes so
+  // user edits flow into ChatView without remount gymnastics.
+  const [persona, setPersona] = useState<string | null>(null);
+  const [customActions, setCustomActions] = useState<CustomAction[]>([]);
+  const reloadFiles = useCallback(async () => {
+    const [p, actions] = await Promise.all([
+      readPersona({io: bundle.io}),
+      readCustomActions({io: bundle.io}),
+    ]);
+    setPersona(p);
+    setCustomActions(actions);
+  }, [bundle.io]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [p, actions] = await Promise.all([
+        readPersona({io: bundle.io}),
+        readCustomActions({io: bundle.io}),
+      ]);
+      if (cancelled) {
+        return;
+      }
+      setPersona(p);
+      setCustomActions(actions);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bundle.io]);
+
+  // First-run routing: until the user has SEEN Settings once, boot
+  // directly into Settings instead of an empty ChatView. The flag
+  // flips THE MOMENT we route to Settings — not on close — so
+  // subsequent opens land on ChatView even when the user closes the
+  // whole overlay via the host sidebar (instead of tapping × on
+  // Settings). Decided ONCE per panel mount, after both state and
+  // prefs have loaded from disk.
+  const firstRouteDecidedRef = useRef(false);
+  useEffect(() => {
+    if (firstRouteDecidedRef.current) {
+      return;
+    }
+    if (state === null) {
+      return;
+    }
+    // Locked / merge / no-key states render their own screens above
+    // the view-switcher; don't make a routing decision yet.
+    if (
+      state.kind === 'locked' ||
+      state.kind === 'merge' ||
+      state.kind === 'no-key'
+    ) {
+      return;
+    }
+    firstRouteDecidedRef.current = true;
+    if (prefs.hasSeenSettings !== true) {
+      setView('settings');
+      // Flip the flag IMMEDIATELY (fire-and-forget). Whether the user
+      // closes via × or via the host sidebar, the next boot lands on
+      // ChatView. Refresh after to mirror disk back into useCopilotState.
+      setHasSeenSettings(bundle.prefsDeps, true)
+        .then(() => refresh())
+        .catch(() => undefined);
+    }
+  }, [state, prefs.hasSeenSettings, setView, bundle.prefsDeps, refresh]);
+
+  // Settings-close handler: just switches view + re-reads the persona
+  // + custom-action files so ChatView picks up any edits. The first-
+  // run flag is flipped on show, not here, so this stays trivial.
+  const onCloseSettings = useCallback(() => {
+    setView('chat');
+    reloadFiles().catch(() => undefined);
+  }, [reloadFiles, setView]);
 
   const onUnlockAttempt = useCallback(
     async (secret: string) => {
@@ -165,6 +258,48 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
     await refresh();
   }, [bundle.prefsDeps, bundle.vaultDeps, refresh]);
 
+  // Triggered by the chat header 🔒 icon. lockNowFlow wipes the
+  // session + derived key; the next render of CopilotPanelInner sees
+  // state.kind === 'locked' and swaps in UnlockScreen automatically.
+  const onLockFromChat = useCallback(() => {
+    lockNowFlow();
+  }, []);
+
+  // Resolve the page context once on mount so we know whether the
+  // currently-open file is a PDF/EPUB (the substrate Grill Me
+  // targets). Null while we haven't resolved yet OR the capture
+  // failed (capture is best-effort by design).
+  //
+  // KNOWN LIMITATION: pageContext is captured on each sidebar-tap
+  // (see index.js subscribeToButtonEvents) and resolved here once
+  // per panel mount. If the user keeps the overlay open while the
+  // host swaps to a different document — possible but rare — the
+  // Grill availability gate will reflect the file the sidebar tap
+  // captured, not the now-on-screen file. The chat send path has
+  // the same staleness behaviour, so the gate stays consistent
+  // with it. Re-tapping the sidebar refreshes both.
+  const [pageContext, setPageContextState] =
+    useState<PageContext | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getPageContext()
+      .then((ctx) => {
+        if (cancelled) {
+          return;
+        }
+        setPageContextState(ctx);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The lock icon only makes sense when the vault is BOTH encrypted
+  // AND currently unlocked — there's nothing to lock otherwise.
+  const showLockButton =
+    state !== null && state.kind === 'unlocked';
+
   // 'locked' or 'merge' (vault present, can't proceed without unlock)
   // fully gate the chat surface. The settings cog is hidden because
   // there's nothing actionable in settings until unlock.
@@ -175,7 +310,7 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
   }
 
   if (view === 'settings') {
-    return <SettingsView onClose={() => setView('chat')} />;
+    return <SettingsView onClose={onCloseSettings} />;
   }
 
   const activeKeyFile = activeKeyFromState(state);
@@ -183,13 +318,72 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
     ? PROVIDER_LABEL_FOR_ACTIVE[activeKeyFile.provider]
     : PROVIDER_LABEL_FALLBACK;
 
+  // Grill Me availability: needs a configured key file AND the open
+  // file must be PDF/EPUB. .note (handwritten) is excluded for v1 —
+  // OCR noise produces low-quality stems, and the locked plan
+  // restricts v1 to the curated-text substrate.
+  const fileKind =
+    pageContext !== null ? classifyFileKind(pageContext.notePath) : null;
+  const grillAvailable = activeKeyFile !== undefined && fileKind === 'doc';
+
+  if (view === 'drill' && pageContext !== null && activeKeyFile !== undefined) {
+    return (
+      <GrillScreen
+        keyFile={activeKeyFile}
+        pageContext={pageContext}
+        onBack={() => setView('chat')}
+      />
+    );
+  }
+
   return (
     <ChatView
       scopeLabel={initialScopeLabel}
       provider={providerLabel}
       keyFile={activeKeyFile}
+      conversationsDeps={bundle.conversationsDeps}
+      customSystemPrompt={persona ?? undefined}
+      customActions={customActions}
+      showLockButton={showLockButton}
+      onLockNow={onLockFromChat}
       onSettingsTap={() => setView('settings')}
       onClose={closeOverlay}
+      onStartDrill={
+        grillAvailable ? () => setView('drill') : undefined
+      }
+    />
+  );
+}
+
+// Small wrapper around GrillView so we can call useProviderClient
+// (a hook) only when we actually render the Grill screen. Keeps the
+// inner-panel render hook order stable across view switches.
+type GrillScreenProps = {
+  keyFile: KeyFile;
+  pageContext: PageContext;
+  onBack: () => void;
+};
+
+function GrillScreen(props: GrillScreenProps): React.JSX.Element {
+  const {keyFile, pageContext, onBack} = props;
+  const {client, apiKey, model} = useProviderClient(keyFile);
+  const attachImage = isImageCapableProvider(keyFile.provider);
+  // Privacy contract parity with ChatView: vision providers ship the
+  // page image, so scrubbing the text-side too would be theatre.
+  // Text-only providers (DeepSeek) don't get an image channel, so the
+  // page text is the only thing on the wire — scrub emails + long
+  // digit runs before any grill module sees it.
+  const sanitizedPageContext: PageContext = attachImage
+    ? pageContext
+    : {...pageContext, pageText: redactPii(pageContext.pageText)};
+  return (
+    <GrillView
+      client={client}
+      apiKey={apiKey}
+      model={model}
+      attachImage={attachImage}
+      pageContext={sanitizedPageContext}
+      onBack={onBack}
     />
   );
 }

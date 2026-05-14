@@ -27,7 +27,7 @@
  * always sent verbatim. On DeepSeek (text-only) the outbound text
  * has emails and 7+ digit runs scrubbed automatically.
  */
-import React, {useCallback, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   Image,
   ScrollView,
@@ -43,8 +43,23 @@ import {debugLog, infoLog} from '../diagnostics/log';
 import {redactPii} from '../privacy/redact';
 import {tryAcquire, release} from '../reentrancy/inFlightGuard';
 import {getPageContext} from '../scope/pageContext';
-import {isImageCapableProvider, type KeyFile} from '../types';
-import {composeUserText} from './composePrompt';
+import {
+  conversationPreview,
+  isImageCapableProvider,
+  type Conversation,
+  type ConversationMessage,
+  type CustomAction,
+  type KeyFile,
+} from '../types';
+import {
+  loadConversations,
+  newConversationId,
+  newMessageId,
+  saveConversation,
+  type ConversationsDeps,
+} from '../storage/conversations';
+import {composeUserText} from '../scope/composePrompt';
+import {shouldAttachPageContext, type SendSource} from './contextRouting';
 import {buildMarkdownStyles} from './markdownStyles';
 import {markdownToPlainText} from './markdownToPlain';
 import {sanitizeProviderError} from './sanitizeProviderError';
@@ -68,7 +83,12 @@ const stepUp = (s: FontSize): FontSize =>
 const stepDown = (s: FontSize): FontSize =>
   FONT_SIZES[Math.max(FONT_SIZES.indexOf(s) - 1, 0)];
 
-export type QuickActionId = 'summarize' | 'explain' | 'clarify' | 'snapshot';
+export type QuickActionId =
+  | 'summarize'
+  | 'explain'
+  | 'clarify'
+  | 'snapshot'
+  | 'grill';
 
 export type ChatViewProps = {
   scopeLabel: string;
@@ -79,8 +99,32 @@ export type ChatViewProps = {
   // file configured), ChatView falls back to fakeProvider so the
   // demo still runs offline.
   keyFile?: KeyFile;
+  // Optional persistence wiring. When present AND a keyFile is
+  // configured, ChatView loads the most-recent conversation on
+  // mount and saves after every turn. Omitting it (older tests,
+  // pre-bundle render in CopilotPanel) keeps the chat in-memory.
+  conversationsDeps?: ConversationsDeps;
+  // P2: optional global persona override. Non-empty values replace
+  // the built-in SYSTEM_PROMPT verbatim — caller is responsible for
+  // whatever steering they want.
+  customSystemPrompt?: string;
+  // P2: user-defined quick actions appended to the 4 built-ins. The
+  // row horizontally scrolls when the combined width overflows.
+  customActions?: CustomAction[];
+  // P2 UX: when the vault is encrypted AND currently unlocked, the
+  // parent renders a 🔒 icon in the context row that taps onLockNow.
+  // Settings still has a Lock-now option behind the encryption
+  // sub-screen; the chat icon is the "step away from device"
+  // shortcut so users don't have to navigate two levels deep.
+  showLockButton?: boolean;
+  onLockNow?: () => void;
   onSettingsTap: () => void;
   onClose: () => void;
+  // P3 Grill Me. When provided, the Grill action is rendered in the
+  // suggestion grid; tapping it routes through onStartDrill instead
+  // of the standard send pipeline. Undefined → no Grill button
+  // (current file isn't a PDF/EPUB, or no provider configured).
+  onStartDrill?: () => void;
 };
 
 type ChatMessage =
@@ -94,30 +138,98 @@ type ChatMessage =
     }
   | {id: string; role: 'thinking'};
 
+// Maps a persisted ConversationMessage back into the on-screen
+// ChatMessage union. Drops nothing: assistant metadata comes through.
+const toChatMessages = (msgs: ConversationMessage[]): ChatMessage[] =>
+  msgs.map((m) =>
+    m.role === 'user'
+      ? {id: m.id, role: 'user', text: m.text}
+      : {
+          id: m.id,
+          role: 'assistant',
+          text: m.text,
+          modelId: m.modelId,
+          latencyMs: m.latencyMs,
+        },
+  );
+
+// Reverse direction — only persists the two real roles ('user',
+// 'assistant'), drops the transient 'thinking' placeholder. Adds
+// createdAt at persistence time (we don't track per-message wall
+// clocks in the live ChatMessage union, but the persisted form
+// stamps them for history ordering).
+const toConversationMessages = (
+  msgs: ChatMessage[],
+): ConversationMessage[] => {
+  const out: ConversationMessage[] = [];
+  let now = Date.now();
+  for (const m of msgs) {
+    if (m.role === 'thinking') {
+      continue;
+    }
+    if (m.role === 'user') {
+      out.push({id: m.id, role: 'user', text: m.text, createdAt: now});
+    } else {
+      out.push({
+        id: m.id,
+        role: 'assistant',
+        text: m.text,
+        modelId: m.modelId,
+        latencyMs: m.latencyMs,
+        createdAt: now,
+      });
+    }
+    // Monotonically nudge so the ordering of stamps follows the
+    // order of messages in the array. Real wall-clock precision
+    // isn't needed; the assistant message coming "after" the user
+    // message is what matters for sort stability if anything else
+    // later groups by createdAt.
+    now += 1;
+  }
+  return out;
+};
+
 // Quick-action button definitions: id, label, icon, and the canned
-// prompt that appears as a user message when tapped.
+// prompt that appears as a user message when tapped. Labels are
+// verbs — the suggestion-card layout has the width for the full
+// word, so we don't need the old "Summary" abbreviation that the
+// horizontal-row layout required.
 const QUICK_ACTIONS: Array<{
   id: QuickActionId;
   label: string;
   icon: string;
   prompt: string;
 }> = [
-  // Button label is "Summary" so the text fits on one line at the
-  // quick-action button width; the prompt sent to the LLM stays as
-  // "Summarize this page" because that's the verb the model needs.
-  {id: 'summarize', label: 'Summary', icon: '☰', prompt: 'Summarize this page'},
+  {id: 'summarize', label: 'Summarize', icon: '☰', prompt: 'Summarize this page'},
   {id: 'explain', label: 'Explain', icon: '?', prompt: 'Explain this page'},
   {id: 'clarify', label: 'Clarify', icon: '✦', prompt: 'What is unclear?'},
   {id: 'snapshot', label: 'Snapshot', icon: '⊡', prompt: 'Snapshot this page'},
 ];
+
+// Grill Me is only available on PDF/EPUB so it's conditional. The
+// prompt string is empty because tap routing goes through onStartDrill
+// instead of the standard sendUserMessage path — the field is a
+// placeholder to keep the QUICK_ACTIONS shape uniform across entries.
+const GRILL_ACTION = {
+  id: 'grill' as const,
+  label: 'Grill Me',
+  icon: '◎',
+  prompt: '',
+} satisfies {id: QuickActionId; label: string; icon: string; prompt: string};
 
 export default function ChatView(props: ChatViewProps): React.JSX.Element {
   const {
     scopeLabel,
     provider,
     keyFile,
+    conversationsDeps,
+    customSystemPrompt,
+    customActions,
+    showLockButton,
+    onLockNow,
     onSettingsTap,
     onClose,
+    onStartDrill,
   } = props;
 
   const {client, apiKey, model} = useProviderClient(keyFile);
@@ -127,6 +239,44 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   // fakeProvider, which returns canned demo replies that LOOK like
   // real model output and send users on a wild goose chase.
   const hasKeyFile = keyFile !== undefined;
+
+  // Effective system prompt: prefer the user's persona override
+  // when it's a non-empty string, otherwise fall back to the
+  // built-in SYSTEM_PROMPT. Trimmed comparison so a whitespace-only
+  // override doesn't accidentally wipe the default rules.
+  const effectiveSystemPrompt =
+    customSystemPrompt !== undefined && customSystemPrompt.trim().length > 0
+      ? customSystemPrompt
+      : SYSTEM_PROMPT;
+
+  // Merge built-ins with user-defined actions. Built-ins always come
+  // first so familiar buttons don't migrate as the user adds custom
+  // ones. Grill Me is appended to the built-in row only when
+  // onStartDrill is supplied by the parent (PDF/EPUB + valid provider).
+  // The user's button row horizontally scrolls when the combined
+  // width overflows.
+  const mergedActions = useMemo(() => {
+    const builtins = QUICK_ACTIONS.map((a) => ({
+      ...a,
+      kind: 'builtin' as const,
+    }));
+    if (onStartDrill !== undefined) {
+      builtins.push({...GRILL_ACTION, kind: 'builtin' as const});
+    }
+    if (customActions === undefined || customActions.length === 0) {
+      return builtins;
+    }
+    return [
+      ...builtins,
+      ...customActions.map((a) => ({
+        id: a.id,
+        label: a.label,
+        icon: a.icon,
+        prompt: a.prompt,
+        kind: 'custom' as const,
+      })),
+    ];
+  }, [customActions, onStartDrill]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState<string>('');
@@ -138,6 +288,16 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     msgId: string;
     state: 'copied' | 'failed';
   } | null>(null);
+  // Conversation persistence state (Req 1+2). When conversationsDeps
+  // is undefined (no wiring bundle yet, or no keyFile) the persistence
+  // path is dormant — `currentConversationId` stays null and writes
+  // are skipped.
+  const [currentConversationId, setCurrentConversationId] = useState<
+    string | null
+  >(null);
+  const [history, setHistory] = useState<Conversation[]>([]);
+  const [showHistory, setShowHistory] = useState<boolean>(false);
+  const conversationCreatedAtRef = useRef<number | null>(null);
   const fontScale = FONT_SCALE[fontSize];
   const canShrink = fontSize !== 'S';
   const canGrow = fontSize !== 'L';
@@ -147,12 +307,89 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   // message — we wait for the assistant message specifically.
   const hasAssistantReply = messages.some(m => m.role === 'assistant');
 
-  // Monotonically increasing message id — sufficient for our single-
-  // session chat. Avoids a uuid dep.
+  // Per-mount monotonic counter folded into a timestamp-based id so
+  // resumed conversations and freshly-minted messages share a
+  // globally-unique namespace.
   const nextIdRef = useRef<number>(1);
-  const newId = () => `m${nextIdRef.current++}`;
+  const newId = () => `${newMessageId()}_${nextIdRef.current++}`;
 
-  const sendUserMessage = useCallback(async (text: string) => {
+  // On mount: restore the most-recent conversation if we have wiring
+  // + a key file. New chats inherit a fresh id only at first send.
+  useEffect(() => {
+    if (conversationsDeps === undefined || !hasKeyFile) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await loadConversations(conversationsDeps);
+        if (cancelled) {
+          return;
+        }
+        setHistory(list);
+        if (list.length > 0) {
+          const newest = list[0];
+          setMessages(toChatMessages(newest.messages));
+          setCurrentConversationId(newest.id);
+          conversationCreatedAtRef.current = newest.createdAt;
+        }
+      } catch (e) {
+        // Persistence failures must never block the chat surface.
+        // Log and continue with an empty session.
+        debugLog(
+          `[COPILOT_CHAT] history restore failed: ${(e as Error).message}`,
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationsDeps, hasKeyFile]);
+
+  // Persists the current conversation after a turn completes. No-op
+  // when persistence isn't wired or there's nothing to save. Mints a
+  // conversation id on the FIRST send (so empty "New chat" sessions
+  // never clutter the FIFO history).
+  const persistTurn = useCallback(
+    async (finalMessages: ChatMessage[]): Promise<void> => {
+      if (conversationsDeps === undefined) {
+        return;
+      }
+      const persisted = toConversationMessages(finalMessages);
+      if (persisted.length === 0) {
+        return;
+      }
+      let convId = currentConversationId;
+      let createdAt = conversationCreatedAtRef.current;
+      if (convId === null) {
+        convId = newConversationId();
+        createdAt = Date.now();
+        setCurrentConversationId(convId);
+        conversationCreatedAtRef.current = createdAt;
+      }
+      const updatedAt = Date.now();
+      const conv: Conversation = {
+        id: convId,
+        createdAt: createdAt ?? updatedAt,
+        updatedAt,
+        providerId: keyFile?.provider,
+        messages: persisted,
+      };
+      try {
+        const list = await saveConversation(conversationsDeps, conv);
+        setHistory(list);
+      } catch (e) {
+        // Persistence failures shouldn't surface to the user as a
+        // chat error — the in-memory turn already completed.
+        debugLog(
+          `[COPILOT_CHAT] history save failed: ${(e as Error).message}`,
+        );
+      }
+    },
+    [conversationsDeps, currentConversationId, keyFile?.provider],
+  );
+
+  const sendUserMessage = useCallback(async (text: string, source: SendSource) => {
     const trimmed = text.trim();
     if (trimmed.length === 0) {
       return;
@@ -171,11 +408,19 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
     const ctl = new AbortController();
     const timeoutId = setTimeout(() => ctl.abort(), SEND_TIMEOUT_MS);
     try {
+      // Smart context routing (Req 4): quick actions always attach
+      // the page; freeform input only attaches when the message
+      // looks page-referential (see contextRouting.isPageReferential).
+      // Off-topic freeform questions become a general AI chat —
+      // saves tokens AND respects the user's "I'm asking something
+      // else now" intent.
+      const attachContext = shouldAttachPageContext(source, trimmed);
       // pageContext is populated as a Promise at sidebar-tap time
       // so the popup can open before screenshot + OCR finishes.
       // Awaiting here absorbs any residual capture latency under the
-      // existing "thinking" placeholder.
-      const ctx = await getPageContext();
+      // existing "thinking" placeholder. When we won't attach, skip
+      // the await entirely.
+      const ctx = attachContext ? await getPageContext() : null;
       // Vision capability is purely a property of the provider —
       // anthropic / openai / gemini get the page image, deepseek
       // doesn't. For text-only providers we silently scrub emails
@@ -191,6 +436,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       infoLog(
         '[COPILOT_CHAT] send ' +
           `provider=${keyFile?.provider ?? 'fake'} ` +
+          `source=${source} attachContext=${attachContext} ` +
           `allowImage=${allowImage} ` +
           `imageAttached=${imageBase64 !== undefined} ` +
           `userText.length=${userText.length} ` +
@@ -198,7 +444,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       );
       const r = await client.send(
         {
-          systemPrompt: SYSTEM_PROMPT,
+          systemPrompt: effectiveSystemPrompt,
           userText,
           imageBase64,
           maxTokens: 256,
@@ -210,60 +456,81 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         `[COPILOT_CHAT] response latencyMs=${r.latencyMs} ` +
           `text.length=${r.text.length} model=${r.modelId}`,
       );
+      const assistantMsg: ChatMessage = {
+        id: newId(),
+        role: 'assistant',
+        text: r.text,
+        modelId: r.modelId,
+        latencyMs: r.latencyMs,
+      };
       setMessages(curr => {
         // Replace the trailing thinking placeholder with the AI msg.
         const without = curr.filter(m => m.id !== thinkingMsg.id);
-        return [
-          ...without,
-          {
-            id: newId(),
-            role: 'assistant',
-            text: r.text,
-            modelId: r.modelId,
-            latencyMs: r.latencyMs,
-          },
-        ];
+        const next = [...without, assistantMsg];
+        // Persist on the same tick the UI commits — the closure
+        // captures `next` so concurrent updates can't clobber it.
+        persistTurn(next).catch(() => undefined);
+        return next;
       });
     } catch (err) {
       // Detailed error stays in console for ops; the bubble shows a
       // short summary that doesn't leak HTTP bodies / request ids.
       console.log('[COPILOT_CHAT] sendUserMessage failed', String(err));
       const userVisible = sanitizeProviderError(err);
+      const errorMsg: ChatMessage = {
+        id: newId(),
+        role: 'assistant',
+        text: `Error: ${userVisible}`,
+      };
       setMessages(curr => {
         const without = curr.filter(m => m.id !== thinkingMsg.id);
-        return [
-          ...without,
-          {
-            id: newId(),
-            role: 'assistant',
-            text: `Error: ${userVisible}`,
-          },
-        ];
+        const next = [...without, errorMsg];
+        // Persist the user message even on failure — losing the
+        // user's prompt to a transient network error would be worse
+        // than persisting an "Error: …" bubble alongside it.
+        persistTurn(next).catch(() => undefined);
+        return next;
       });
     } finally {
       clearTimeout(timeoutId);
       release();
       setBusy(false);
     }
-  }, [apiKey, client, keyFile, model]);
+  }, [apiKey, client, effectiveSystemPrompt, keyFile, model, persistTurn]);
 
-  const onQuickActionTap = useCallback(
-    (action: QuickActionId) => {
+  // Single dispatch for any action button (built-in OR user-defined).
+  // The id is opaque here — we look up the prompt from the merged
+  // list. Built-in ids are the closed `QuickActionId` union; custom
+  // ids are arbitrary strings minted at save time in Settings.
+  // Source = 'quick-action' so the page context is always attached.
+  // Grill is special: it doesn't go through sendUserMessage at all —
+  // it hands off to the drill flow which owns its own state machine.
+  const onActionTap = useCallback(
+    (actionId: string) => {
       if (!hasKeyFile) {
         return;
       }
-      // QuickActionId is a closed union — the find always matches.
-      const def = QUICK_ACTIONS.find(a => a.id === action) as (typeof QUICK_ACTIONS)[number];
-      sendUserMessage(def.prompt);
+      if (actionId === 'grill' && onStartDrill !== undefined) {
+        onStartDrill();
+        return;
+      }
+      const def = mergedActions.find((a) => a.id === actionId);
+      if (def === undefined) {
+        return;
+      }
+      sendUserMessage(def.prompt, 'quick-action');
     },
-    [hasKeyFile, sendUserMessage],
+    [hasKeyFile, mergedActions, sendUserMessage, onStartDrill],
   );
 
+  // Source = 'freeform' so contextRouting.isPageReferential gates
+  // whether the page context is attached. Off-topic freeform
+  // questions become a general AI chat.
   const onSendInput = useCallback(() => {
     if (!hasKeyFile) {
       return;
     }
-    sendUserMessage(input);
+    sendUserMessage(input, 'freeform');
   }, [hasKeyFile, input, sendUserMessage]);
 
   // Per-bubble copy. The bubble renders the LLM's markdown source
@@ -307,14 +574,53 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   );
   const handleLarger = useCallback(() => setFontSize(s => stepUp(s)), []);
 
-  // Wipes the chat history so the user can start fresh on the same
-  // page without closing/reopening the overlay. Keeps font size
-  // (a user pref, not session state).
+  // Wipes the on-screen chat so the user can start fresh on the
+  // same page without closing/reopening the overlay. Keeps font size
+  // (a user pref, not session state). Clears the active conversation
+  // id so the NEXT send mints a fresh entry instead of overwriting
+  // the previous one — the previous conversation stays in the
+  // history list, capped by FIFO.
   const onNewChat = useCallback(() => {
     setMessages([]);
     setInput('');
     setCopyFeedback(null);
+    setCurrentConversationId(null);
+    conversationCreatedAtRef.current = null;
+    setShowHistory(false);
   }, []);
+
+  const onToggleHistory = useCallback(() => {
+    setShowHistory((s) => !s);
+  }, []);
+
+  // Loads a saved conversation into the chat view, replacing whatever
+  // is currently on screen, and bumps its updatedAt so it floats to
+  // list[0]. On the next reopen the user lands back on the chat they
+  // were viewing — without the bump, list[0] would always be the
+  // most-recently-EDITED conversation, which can differ from what
+  // the user was last actively viewing.
+  const onSelectConversation = useCallback(
+    (conv: Conversation) => {
+      setMessages(toChatMessages(conv.messages));
+      setCurrentConversationId(conv.id);
+      conversationCreatedAtRef.current = conv.createdAt;
+      setShowHistory(false);
+      setInput('');
+      setCopyFeedback(null);
+      if (conversationsDeps === undefined) {
+        return;
+      }
+      const touched: Conversation = {...conv, updatedAt: Date.now()};
+      saveConversation(conversationsDeps, touched)
+        .then((list) => setHistory(list))
+        .catch((e) =>
+          debugLog(
+            `[COPILOT_CHAT] history touch failed: ${(e as Error).message}`,
+          ),
+        );
+    },
+    [conversationsDeps],
+  );
 
   return (
     <View testID="chat-view" style={styles.root}>
@@ -372,57 +678,71 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
         </View>
       </View>
 
-      {/* Context row: scope label on the left, New-chat + Settings
-          icons on the right. Putting Settings here (instead of the
-          footer) makes it discoverable without scrolling — the cog
-          was hard to spot beneath the input box. */}
+      {/* Context row: scope label on the left, Lock + History +
+          New-chat + Settings icons on the right. Glyphs are
+          Unicode-only (not emoji) so the e-ink display renders them
+          at full ink weight instead of going through the color-
+          emoji pipeline — visibly bolder + larger than the original
+          📚 / 📝 / ⚙ emoji set. Lock (🔒) is only rendered when the
+          parent reports the vault is encrypted + unlocked. */}
       <View style={styles.contextRow}>
         <Text testID="chat-context" style={styles.contextLine}>
           Context: {scopeLabel}
         </Text>
         <View style={styles.contextActions}>
+          {showLockButton && onLockNow !== undefined ? (
+            <TouchableOpacity
+              testID="chat-lock"
+              accessibilityLabel="Lock Copilot now"
+              onPress={onLockNow}
+              style={styles.iconBtn}>
+              {/* Key glyph: ⚿ (squared key) reads as a lock at e-ink
+                  scale; 🔑 is unambiguously a key, matching the rest
+                  of the "lock the vault" UX. */}
+              <Text style={styles.iconBtnText}>{'🔑'}</Text>
+            </TouchableOpacity>
+          ) : null}
+          {history.length > 0 ? (
+            <TouchableOpacity
+              testID="chat-history"
+              accessibilityLabel="Show recent conversations"
+              onPress={onToggleHistory}
+              style={styles.iconBtn}>
+              {/* Pocket-watch glyph: clearer "history / past chats"
+                  semantic than the books emoji 📚 and renders bolder
+                  on e-ink. */}
+              <Text style={styles.iconBtnText}>{'⏱'}</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             testID="chat-new"
             accessibilityLabel="Start a new chat"
             onPress={onNewChat}
             style={styles.iconBtn}>
-            <Text style={styles.iconBtnText}>📝</Text>
+            {/* Pencil glyph for "new entry" — Unicode dingbat, not
+                an emoji, so the e-ink renderer draws a bold stroke
+                rather than a color sprite. */}
+            <Text style={styles.iconBtnText}>{'✎'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             testID="chat-settings"
             accessibilityLabel="Open Copilot settings"
             onPress={onSettingsTap}
             style={styles.iconBtn}>
-            <Text style={styles.iconBtnText}>⚙</Text>
+            {/* Bare gear codepoint (U+2699) — explicitly text
+                presentation. Combined with the bumped fontSize (22)
+                and weight 700 in iconBtnText, this reads boldly on
+                the e-ink panel without going through the color-emoji
+                pipeline that the variation-selector form would
+                trigger. */}
+            <Text style={styles.iconBtnText}>{'⚙'}</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Quick action row — explicit gap via `gap` style; each button
-          flex-shrinks gracefully on narrower devices. Disabled when
-          no key file is configured so the user can't tap into the
-          fakeProvider canned-response trap. */}
-      <View style={styles.quickActionRow}>
-        {QUICK_ACTIONS.map(a => {
-          const disabled = busy || !hasKeyFile;
-          return (
-            <TouchableOpacity
-              key={a.id}
-              testID={`chat-action-${a.id}`}
-              accessibilityLabel={a.label}
-              onPress={() => onQuickActionTap(a.id)}
-              disabled={disabled}
-              style={[styles.quickActionBtn, disabled && styles.btnDisabled]}>
-              <Text style={styles.quickActionIcon} numberOfLines={1}>
-                {a.icon}
-              </Text>
-              <Text style={styles.quickActionLabel} numberOfLines={1}>
-                {a.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      {/* Quick actions previously sat as a row here. They've moved
+          into the empty-state of the chat scroll (see SuggestionCards
+          below) so the chat area dominates the panel. */}
 
       {/* Privacy caution — matches README: vision providers send the
           screenshot as-is; DeepSeek is text-only so outbound text is
@@ -435,36 +755,49 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
 
       <View style={styles.divider} />
 
-      {/* Chat scroll. Three states stack here:
-          - no key file → onboarding checklist (blocks quick actions),
-          - key file but no messages yet → idle hint,
-          - key file with messages → bubbles. */}
-      <ScrollView
-        testID="chat-scroll"
-        style={styles.chatScroll}
-        contentContainerStyle={styles.chatContent}>
-        {!hasKeyFile ? (
-          <SetupChecklist
-            testID="chat-setup-checklist"
-            headline="No API key configured. Copilot needs a key file in MyStyle/SnCopilot/ before the quick actions and chat can talk to a real model."
-          />
-        ) : messages.length === 0 ? (
-          <Text testID="chat-empty" style={styles.emptyHint}>
-            Tap a quick action above, or ask a question below.
-          </Text>
-        ) : null}
-        {messages.map(m => (
-          <ChatBubble
-            key={m.id}
-            msg={m}
-            fontScale={fontScale}
-            onCopy={onCopyBubble}
-            copyState={
-              copyFeedback?.msgId === m.id ? copyFeedback.state : 'idle'
-            }
-          />
-        ))}
-      </ScrollView>
+      {/* Chat scroll OR History panel. The history panel replaces the
+          chat scroll when active so the user can pick from the last
+          CONVERSATION_HISTORY_LIMIT (5) conversations. Tapping an
+          item loads it back into the chat; the Close button drops
+          back to the live chat without changing anything. */}
+      {showHistory ? (
+        <HistoryPanel
+          testID="chat-history-panel"
+          history={history}
+          activeId={currentConversationId}
+          onSelect={onSelectConversation}
+          onClose={() => setShowHistory(false)}
+        />
+      ) : (
+        <ScrollView
+          testID="chat-scroll"
+          style={styles.chatScroll}
+          contentContainerStyle={styles.chatContent}>
+          {!hasKeyFile ? (
+            <SetupChecklist
+              testID="chat-setup-checklist"
+              headline="No API key configured. Copilot needs a key file in MyStyle/SnCopilot/ before the quick actions and chat can talk to a real model."
+            />
+          ) : messages.length === 0 ? (
+            <SuggestionCards
+              actions={mergedActions}
+              disabled={busy}
+              onTap={onActionTap}
+            />
+          ) : null}
+          {messages.map(m => (
+            <ChatBubble
+              key={m.id}
+              msg={m}
+              fontScale={fontScale}
+              onCopy={onCopyBubble}
+              copyState={
+                copyFeedback?.msgId === m.id ? copyFeedback.state : 'idle'
+              }
+            />
+          ))}
+        </ScrollView>
+      )}
 
       <View style={styles.divider} />
 
@@ -504,6 +837,142 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
   );
 }
 
+
+// Empty-state suggestion grid — shown inside the chat scroll when
+// no messages have landed yet AND a key file is configured. Replaces
+// the old "Tap a quick action above" hint. Tapping a card fires the
+// same onActionTap plumbing as the previous header row. Once the
+// user sends a message the grid vanishes; "New chat" brings it back.
+//
+// Column count adapts to the total number of actions so the grid
+// stays on one screen as the user adds custom actions:
+//   - ≤ 6 cards (4 built-ins + up to 2 customs) → 2 columns
+//   - ≥ 7 cards → 3 columns, smaller per-card width
+// Beyond ~8 cards the chat scroll naturally takes over for overflow.
+const SUGGESTION_COL_BREAKPOINT = 6;
+function SuggestionCards({
+  actions,
+  disabled,
+  onTap,
+}: {
+  actions: ReadonlyArray<{id: string; label: string; icon: string; prompt: string}>;
+  disabled: boolean;
+  onTap: (actionId: string) => void;
+}): React.JSX.Element {
+  const threeCol = actions.length > SUGGESTION_COL_BREAKPOINT;
+  return (
+    <View testID="chat-suggestions" style={styles.suggestionsRoot}>
+      <Text style={styles.suggestionsHint}>
+        Tap a suggestion or ask a question below.
+      </Text>
+      <View style={styles.suggestionsGrid}>
+        {actions.map((a) => (
+          <TouchableOpacity
+            key={a.id}
+            testID={`chat-suggestion-${a.id}`}
+            accessibilityLabel={a.label}
+            onPress={() => onTap(a.id)}
+            disabled={disabled}
+            style={[
+              styles.suggestionCard,
+              threeCol
+                ? styles.suggestionCardThreeCol
+                : styles.suggestionCardTwoCol,
+              disabled && styles.btnDisabled,
+            ]}>
+            <View style={styles.suggestionCardHeader}>
+              <Text
+                style={[
+                  styles.suggestionIcon,
+                  threeCol && styles.suggestionIconCompact,
+                ]}>
+                {a.icon}
+              </Text>
+              <Text
+                style={[
+                  styles.suggestionLabel,
+                  threeCol && styles.suggestionLabelCompact,
+                ]}
+                numberOfLines={1}>
+                {a.label}
+              </Text>
+            </View>
+            <Text
+              style={[
+                styles.suggestionPrompt,
+                threeCol && styles.suggestionPromptCompact,
+              ]}
+              numberOfLines={2}>
+              {a.prompt}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// Renders the recent-conversations list inline. Tapping an entry
+// hands the conversation back via onSelect (ChatView re-hydrates the
+// scroll); the Close button just collapses the panel.
+function HistoryPanel({
+  testID,
+  history,
+  activeId,
+  onSelect,
+  onClose,
+}: {
+  testID: string;
+  history: Conversation[];
+  activeId: string | null;
+  onSelect: (conv: Conversation) => void;
+  onClose: () => void;
+}): React.JSX.Element {
+  return (
+    <ScrollView
+      testID={testID}
+      style={styles.chatScroll}
+      contentContainerStyle={styles.chatContent}>
+      <View style={styles.historyHeader}>
+        <Text style={styles.historyTitle}>Recent chats</Text>
+        <TouchableOpacity
+          testID={`${testID}-close`}
+          accessibilityLabel="Close history"
+          onPress={onClose}
+          style={styles.iconBtn}>
+          <Text style={styles.iconBtnText}>×</Text>
+        </TouchableOpacity>
+      </View>
+      {history.length === 0 ? (
+        <Text style={styles.emptyHint}>No saved chats yet.</Text>
+      ) : (
+        history.map((c) => {
+          const isActive = c.id === activeId;
+          const preview = conversationPreview(c) || '(empty)';
+          return (
+            <TouchableOpacity
+              key={c.id}
+              testID={`chat-history-item-${c.id}`}
+              accessibilityLabel={`Open conversation ${preview}`}
+              onPress={() => onSelect(c)}
+              style={[
+                styles.historyItem,
+                isActive && styles.historyItemActive,
+              ]}>
+              <Text style={styles.historyItemPreview} numberOfLines={2}>
+                {preview}
+              </Text>
+              <Text style={styles.historyItemMeta}>
+                {c.messages.length} message{c.messages.length === 1 ? '' : 's'}
+                {isActive ? ' · current' : ''}
+              </Text>
+            </TouchableOpacity>
+          );
+        })
+      )}
+    </ScrollView>
+  );
+}
 
 function ChatBubble({
   msg,
@@ -651,43 +1120,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   iconBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    // Bumped from 10/4 to 12/8 + minWidth so the touch target is
+    // bigger and the icon visibly stands out on the e-ink panel.
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderWidth: 1,
     borderColor: '#000000',
     borderRadius: 4,
     marginLeft: 6,
-  },
-  iconBtnText: {
-    fontSize: 18,
-    color: '#000000',
-  },
-  quickActionRow: {
-    flexDirection: 'row',
-    flexWrap: 'nowrap',
-    justifyContent: 'space-between',
-    marginTop: 4,
-    marginBottom: 6,
-    gap: 6,
-  },
-  quickActionBtn: {
-    flex: 1,
-    flexDirection: 'row',
+    minWidth: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 8,
   },
-  quickActionIcon: {
-    fontSize: 15,
-    color: '#000000',
-    marginRight: 5,
-  },
-  quickActionLabel: {
-    fontSize: 15,
+  iconBtnText: {
+    // Bumped from 18 → 22 + weight 700. The icons are the user's
+    // primary navigation hand-holds; we want them legible without
+    // squinting on a small-format Supernote.
+    fontSize: 22,
+    fontWeight: '700',
     color: '#000000',
   },
   privacyNote: {
@@ -820,4 +1270,86 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingTop: 4,
   },
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  historyTitle: {
+    fontSize: 17,
+    color: '#000000',
+    fontWeight: '600',
+  },
+  historyItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  historyItemActive: {
+    borderStyle: 'dashed',
+  },
+  historyItemPreview: {
+    fontSize: 15,
+    color: '#000000',
+  },
+  historyItemMeta: {
+    fontSize: 13,
+    color: '#000000',
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  suggestionsRoot: {paddingVertical: 8},
+  suggestionsHint: {
+    fontSize: 14,
+    color: '#000000',
+    fontStyle: 'italic',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  // 2-column grid: each card takes ~half the row with a small gap.
+  // flexBasis works around React Native's lack of CSS grid.
+  suggestionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  suggestionCard: {
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  suggestionCardTwoCol: {width: '48%', minHeight: 72},
+  // 3-column variant: ~31% width with reduced padding/min-height so
+  // up to 9 cards fit on one e-ink panel without scrolling.
+  suggestionCardThreeCol: {width: '31%', minHeight: 60, paddingHorizontal: 8},
+  suggestionCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  suggestionIcon: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    marginRight: 6,
+    minWidth: 22,
+    textAlign: 'center',
+  },
+  suggestionIconCompact: {fontSize: 15, minWidth: 18, marginRight: 4},
+  suggestionLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#000000',
+    flex: 1,
+  },
+  suggestionLabelCompact: {fontSize: 13},
+  suggestionPrompt: {fontSize: 12, color: '#000000', fontStyle: 'italic'},
+  suggestionPromptCompact: {fontSize: 11},
 });

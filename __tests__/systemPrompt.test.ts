@@ -23,4 +23,13 @@ describe('SYSTEM_PROMPT', () => {
   it('forbids tables', () => {
     expect(SYSTEM_PROMPT.toLowerCase()).toContain('avoid tables');
   });
+
+  it('permits general-AI answers when no page is attached (Req 4)', () => {
+    const lower = SYSTEM_PROMPT.toLowerCase();
+    // Must explicitly allow off-topic / general questions to be
+    // answered as a regular assistant — guards against accidental
+    // re-introduction of the "always steer back to the page" frame.
+    expect(lower).toContain('general');
+    expect(lower).toMatch(/do not steer|do not yank|do not pivot/);
+  });
 });

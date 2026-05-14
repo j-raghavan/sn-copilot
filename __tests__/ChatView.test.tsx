@@ -109,10 +109,10 @@ describe('ChatView — initial render', () => {
     expect(findByTestID(tree, 'chat-context')).toBeDefined();
     expect(textOf(tree, 'chat-context')).toContain('Current Page');
 
-    expect(findByTestID(tree, 'chat-action-summarize')).toBeDefined();
-    expect(findByTestID(tree, 'chat-action-explain')).toBeDefined();
-    expect(findByTestID(tree, 'chat-action-clarify')).toBeDefined();
-    expect(findByTestID(tree, 'chat-action-snapshot')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-summarize')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-explain')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-clarify')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestion-snapshot')).toBeDefined();
 
     expect(findByTestID(tree, 'chat-privacy-note')).toBeDefined();
     expect(textOf(tree, 'chat-privacy-note')).toContain(
@@ -121,9 +121,9 @@ describe('ChatView — initial render', () => {
 
     // With a keyFile, the empty-hint shows and the setup checklist
     // is hidden — quick actions are usable.
-    expect(findByTestID(tree, 'chat-empty')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestions')).toBeDefined();
     expect(maybeFindByTestID(tree, 'chat-setup-checklist')).toBeNull();
-    expect(findByTestID(tree, 'chat-action-summarize').props.disabled).toBe(
+    expect(findByTestID(tree, 'chat-suggestion-summarize').props.disabled).toBe(
       false,
     );
 
@@ -176,10 +176,10 @@ describe('ChatView — quick action flow', () => {
   it('appends user message + thinking placeholder + AI message on Summarize tap', async () => {
     const {tree} = render();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     // After tap: user msg + thinking msg are appended; empty hint gone.
-    expect(maybeFindByTestID(tree, 'chat-empty')).toBeNull();
+    expect(maybeFindByTestID(tree, 'chat-suggestions')).toBeNull();
     expect(findAllText(tree).join(' | ')).toContain('Summarize this page');
     // The thinking placeholder shows "…"
     expect(findAllText(tree).join(' | ')).toContain('…');
@@ -197,7 +197,7 @@ describe('ChatView — quick action flow', () => {
   it('Explain action sends "Explain this page"', async () => {
     const {tree} = render();
     act(() => {
-      findByTestID(tree, 'chat-action-explain').props.onPress();
+      findByTestID(tree, 'chat-suggestion-explain').props.onPress();
     });
     expect(findAllText(tree).join(' | ')).toContain('Explain this page');
     await flushFakeProvider();
@@ -207,7 +207,7 @@ describe('ChatView — quick action flow', () => {
   it('Clarify action sends "What is unclear?"', async () => {
     const {tree} = render();
     act(() => {
-      findByTestID(tree, 'chat-action-clarify').props.onPress();
+      findByTestID(tree, 'chat-suggestion-clarify').props.onPress();
     });
     expect(findAllText(tree).join(' | ')).toContain('What is unclear?');
   });
@@ -215,7 +215,7 @@ describe('ChatView — quick action flow', () => {
   it('Snapshot action sends "Snapshot this page"', () => {
     const {tree} = render();
     act(() => {
-      findByTestID(tree, 'chat-action-snapshot').props.onPress();
+      findByTestID(tree, 'chat-suggestion-snapshot').props.onPress();
     });
     expect(findAllText(tree).join(' | ')).toContain('Snapshot this page');
   });
@@ -246,7 +246,7 @@ describe('ChatView — free-form input', () => {
       findByTestID(tree, 'chat-send').props.onPress();
     });
     // No user message added; empty hint still shown
-    expect(findByTestID(tree, 'chat-empty')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestions')).toBeDefined();
   });
 
   it('whitespace-only input is a no-op', () => {
@@ -257,22 +257,29 @@ describe('ChatView — free-form input', () => {
     act(() => {
       findByTestID(tree, 'chat-send').props.onPress();
     });
-    expect(findByTestID(tree, 'chat-empty')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestions')).toBeDefined();
   });
 });
 
 describe('ChatView — re-entrancy', () => {
-  it('disables action buttons while in-flight; re-enables after', async () => {
+  it('hides suggestion cards once a message is in flight; send disabled', async () => {
     const {tree} = render();
+    // Empty state: suggestion cards visible.
+    expect(maybeFindByTestID(tree, 'chat-suggestions')).not.toBeNull();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
-    expect(findByTestID(tree, 'chat-action-summarize').props.disabled).toBe(true);
+    // First tap appends the user message + thinking bubble → cards
+    // unmount (they're empty-state only). Send remains disabled
+    // while the request is in flight.
+    expect(maybeFindByTestID(tree, 'chat-suggestions')).toBeNull();
     expect(findByTestID(tree, 'chat-send').props.disabled).toBe(true);
 
     await flushFakeProvider();
 
-    expect(findByTestID(tree, 'chat-action-summarize').props.disabled).toBe(false);
+    // Request resolves → send re-enabled (still requires input text
+    // and a keyFile, both of which are present in this fixture).
+    expect(findByTestID(tree, 'chat-input').props.editable).toBe(true);
   });
 
   it('a second tap during in-flight is dropped (logged + no extra user msg)', () => {
@@ -283,10 +290,10 @@ describe('ChatView — re-entrancy', () => {
     const log = jest.spyOn(console, 'log').mockImplementation(() => {});
     try {
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       // No user message should have been appended.
-      expect(maybeFindByTestID(tree, 'chat-empty')).not.toBeNull();
+      expect(maybeFindByTestID(tree, 'chat-suggestions')).not.toBeNull();
       const lines = log.mock.calls.map(c => c.join(' '));
       expect(lines.some(l => l.includes('already in flight'))).toBe(true);
     } finally {
@@ -301,7 +308,7 @@ describe('ChatView — font scaling', () => {
   const renderWithReply = async () => {
     const {tree} = render();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushFakeProvider();
     return tree;
@@ -311,7 +318,7 @@ describe('ChatView — font scaling', () => {
     const {tree} = render();
     expect(maybeFindByTestID(tree, 'chat-font-controls')).toBeNull();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     // While "thinking" placeholder is up — still no AI reply — controls
     // should remain hidden.
@@ -364,7 +371,7 @@ describe('ChatView — provider rejection', () => {
     try {
       const {tree} = render();
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       await flushFakeProvider();
       const text = findAllText(tree).join(' | ');
@@ -393,7 +400,7 @@ describe('ChatView — provider rejection', () => {
     try {
       const {tree} = render();
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       await flushFakeProvider();
       const text = findAllText(tree).join(' | ');
@@ -425,7 +432,7 @@ describe('ChatView — per-bubble copy', () => {
     try {
       const {tree} = render();
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       await flushFakeProvider();
       const pressable = findCopyButton(tree);
@@ -463,7 +470,7 @@ describe('ChatView — per-bubble copy', () => {
     try {
       const {tree} = render();
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       await flushFakeProvider();
       const pressable = findCopyButton(tree)!;
@@ -487,7 +494,7 @@ describe('ChatView — per-bubble copy', () => {
   it('user bubbles + thinking bubbles do NOT show a copy button', async () => {
     const {tree} = render();
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     // User msg + thinking placeholder are present, AI is not yet.
     const copyBtns = tree.root.findAllByProps({
@@ -518,7 +525,7 @@ describe('ChatView — per-bubble copy', () => {
     try {
       const {tree} = render();
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       await flushFakeProvider();
       const copyId = findCopyTestID(tree);
@@ -551,7 +558,7 @@ describe('ChatView — per-bubble copy', () => {
     try {
       const {tree} = render();
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       await flushFakeProvider();
       const copyId = findCopyTestID(tree);
@@ -582,7 +589,7 @@ describe('ChatView — per-bubble copy', () => {
     try {
       const {tree} = render();
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       await flushFakeProvider();
       const copyId = findCopyTestID(tree);
@@ -607,17 +614,17 @@ describe('ChatView — new chat button', () => {
       findByTestID(tree, 'chat-input').props.onChangeText('partial draft');
     });
     act(() => {
-      findByTestID(tree, 'chat-action-summarize').props.onPress();
+      findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
     });
     await flushFakeProvider();
-    // Sanity: chat-empty hint is gone, input still holds what was typed
-    expect(maybeFindByTestID(tree, 'chat-empty')).toBeNull();
+    // Sanity: chat-suggestions hint is gone, input still holds what was typed
+    expect(maybeFindByTestID(tree, 'chat-suggestions')).toBeNull();
     // Tap New Chat
     act(() => {
       findByTestID(tree, 'chat-new').props.onPress();
     });
     // Empty hint should be back; input cleared.
-    expect(findByTestID(tree, 'chat-empty')).toBeDefined();
+    expect(findByTestID(tree, 'chat-suggestions')).toBeDefined();
     expect(findByTestID(tree, 'chat-input').props.value).toBe('');
   });
 });
@@ -663,7 +670,7 @@ describe('ChatView — pageContext composition', () => {
     try {
       const {tree} = render();
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       await flushFakeProvider();
       const sentReq = sendSpy.mock.calls[0][0] as {userText: string};
@@ -687,7 +694,7 @@ describe('ChatView — no key file: setup checklist + disabled actions', () => {
   it('shows the chat setup checklist instead of the empty hint when keyFile is undefined', () => {
     const {tree} = render({keyFile: undefined});
     expect(findByTestID(tree, 'chat-setup-checklist')).toBeDefined();
-    expect(maybeFindByTestID(tree, 'chat-empty')).toBeNull();
+    expect(maybeFindByTestID(tree, 'chat-suggestions')).toBeNull();
     // All four checklist steps are visible.
     expect(findByTestID(tree, 'setup-step-1')).toBeDefined();
     expect(findByTestID(tree, 'setup-step-2')).toBeDefined();
@@ -695,44 +702,18 @@ describe('ChatView — no key file: setup checklist + disabled actions', () => {
     expect(findByTestID(tree, 'setup-step-4')).toBeDefined();
   });
 
-  it('disables the four quick-action buttons and the send button', () => {
+  it('suggestion cards are not rendered without a key file; setup checklist + disabled send + read-only input shown instead', () => {
     const {tree} = render({keyFile: undefined});
-    expect(findByTestID(tree, 'chat-action-summarize').props.disabled).toBe(
-      true,
-    );
-    expect(findByTestID(tree, 'chat-action-explain').props.disabled).toBe(
-      true,
-    );
-    expect(findByTestID(tree, 'chat-action-clarify').props.disabled).toBe(
-      true,
-    );
-    expect(findByTestID(tree, 'chat-action-snapshot').props.disabled).toBe(
-      true,
-    );
+    // No cards at all when no keyFile — setup checklist replaces them.
+    expect(maybeFindByTestID(tree, 'chat-suggestions')).toBeNull();
+    expect(maybeFindByTestID(tree, 'chat-suggestion-summarize')).toBeNull();
+    expect(findByTestID(tree, 'chat-setup-checklist')).toBeDefined();
     expect(findByTestID(tree, 'chat-send').props.disabled).toBe(true);
     // Input is read-only, with a "go to Settings" placeholder.
     expect(findByTestID(tree, 'chat-input').props.editable).toBe(false);
     expect(findByTestID(tree, 'chat-input').props.placeholder).toContain(
       'Settings',
     );
-  });
-
-  it('quick-action onPress is a no-op when no key file is configured', async () => {
-    const fp = require('../src/providers/fakeProvider').default;
-    const sendSpy = jest.spyOn(fp, 'send');
-    try {
-      const {tree} = render({keyFile: undefined});
-      act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
-      });
-      await flushFakeProvider();
-      expect(sendSpy).not.toHaveBeenCalled();
-      // No user/thinking/assistant bubble was appended either.
-      expect(maybeFindByTestID(tree, 'chat-empty')).toBeNull();
-      expect(findByTestID(tree, 'chat-setup-checklist')).toBeDefined();
-    } finally {
-      sendSpy.mockRestore();
-    }
   });
 
   it('Settings cog still works while disabled (so users can land where the key goes)', () => {
@@ -762,7 +743,7 @@ describe('ChatView — hung send timeout', () => {
     try {
       const {tree} = render();
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       // Drain initial microtasks so getPageContext + sendSpy are
       // wired up before we advance the clock.
@@ -862,7 +843,7 @@ describe('ChatView — provider-driven image gate', () => {
       // No keyFile → fakeProvider, treated as image-capable.
       const {tree} = render();
       act(() => {
-        findByTestID(tree, 'chat-action-summarize').props.onPress();
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
       });
       await flushFakeProvider();
       const sentReq = sendSpy.mock.calls[0][0] as {

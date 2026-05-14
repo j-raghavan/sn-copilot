@@ -13,7 +13,11 @@
 // to DEFAULT_PREFS so the user is never blocked from the chat
 // surface by a corrupt prefs file. Writes are last-write-wins.
 
-import {DEFAULT_PREFS, type CopilotPrefs, type EncryptionMode} from '../types';
+import {
+  DEFAULT_PREFS,
+  type CopilotPrefs,
+  type EncryptionMode,
+} from '../types';
 import type {FileIo} from './fileIo';
 import type {Logger} from '../sdk/types';
 import {decodeUtf8, encodeUtf8} from '../sdk/utf8';
@@ -48,11 +52,20 @@ const sanitize = (raw: Partial<CopilotPrefs>): CopilotPrefs => {
     raw.idleTimeoutMin >= 0
       ? raw.idleTimeoutMin
       : DEFAULT_PREFS.idleTimeoutMin;
-  return {
+  const out: CopilotPrefs = {
     version: 1,
     encryptionMode: mode,
     idleTimeoutMin: idle,
   };
+  // Boolean coercion: any non-true value collapses to false (the
+  // default) so corrupted JSON can't accidentally bypass first-run.
+  if (raw.hasSeenSettings === true) {
+    out.hasSeenSettings = true;
+  }
+  // Legacy fields (customSystemPrompt, customActions) are silently
+  // dropped on read. They've moved to file-based config under
+  // MyStyle/SnCopilot/ — see personaFile.ts and customActionsFile.ts.
+  return out;
 };
 
 export const readPrefs = async (deps: PrefsDeps): Promise<CopilotPrefs> => {
@@ -106,6 +119,24 @@ export const setIdleTimeoutMin = async (
 ): Promise<CopilotPrefs> => {
   const current = await readPrefs(deps);
   const next: CopilotPrefs = {...current, idleTimeoutMin: minutes};
+  await writePrefs(deps, next);
+  return next;
+};
+
+// One-shot: flips the first-run flag so subsequent boots land on
+// ChatView instead of Settings. Idempotent — re-calling once the
+// flag is set is a cheap no-op write.
+export const setHasSeenSettings = async (
+  deps: PrefsDeps,
+  seen: boolean,
+): Promise<CopilotPrefs> => {
+  const current = await readPrefs(deps);
+  const next: CopilotPrefs = {...current};
+  if (seen) {
+    next.hasSeenSettings = true;
+  } else {
+    delete next.hasSeenSettings;
+  }
   await writePrefs(deps, next);
   return next;
 };

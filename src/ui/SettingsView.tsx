@@ -18,11 +18,24 @@
  */
 
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import {resolveActiveProvider} from '../storage/activeProvider';
 import {createProviderClient} from '../providers';
 import {buildWiringBundle, type WiringBundle} from '../storage/wiring';
 import {useCopilotState} from '../storage/useCopilotState';
+import {
+  readCustomActions,
+  CUSTOM_ACTIONS_PATH,
+} from '../storage/customActionsFile';
+import {readPersona, writePersona} from '../storage/personaFile';
 import {setEncryptionMode, setIdleTimeoutMin} from '../storage/prefs';
 import * as idleTimer from '../storage/idleTimer';
 import {
@@ -34,9 +47,17 @@ import {
 } from '../storage/secureFlows';
 import {getActiveKeys} from '../storage/sessionKey';
 import {encodeUtf8} from '../sdk/utf8';
-import type {KeyFile, ProviderId, ProviderResolution} from '../types';
-import EncryptionSettings from './EncryptionSettings';
+import type {
+  CustomAction,
+  KeyFile,
+  ProviderId,
+  ProviderResolution,
+} from '../types';
+// (CustomAction stays imported for the read-only display below.)
+import CustomActionsSettings from './CustomActionsSettings';
+import EncryptionScreen from './EncryptionScreen';
 import MigrationPrompt from './MigrationPrompt';
+import PersonaSettings from './PersonaSettings';
 import PinSetup from './PinSetup';
 import SetupChecklist from './SetupChecklist';
 
@@ -58,12 +79,16 @@ type TestStatus =
   | {kind: 'error'; message: string};
 
 // Sub-screens stacked on top of the main settings — the "encryption
-// flow" pseudo-modes. Selected by the user via the migration banner
-// or the encryption section actions.
+// flow" pseudo-modes. Selected by the user via the migration banner,
+// the encryption nav row, or the actions inside the encryption screen.
 type SubFlow =
   | {kind: 'idle'}
   | {kind: 'pin-setup'; intent: 'create' | 'change'}
-  | {kind: 'post-encrypt-cleanup'; sourcePaths: string[]};
+  | {kind: 'post-encrypt-cleanup'; sourcePaths: string[]}
+  // P2 UX cleanup: when the vault is encrypted, the dense list of
+  // Auto-lock / Lock now / Change PIN / Disable / Reset lives behind
+  // a single nav row on the main settings, opened as this sub-screen.
+  | {kind: 'encryption'};
 
 const maskKey = (raw: string): string => {
   if (raw.length <= 7) {
@@ -100,21 +125,14 @@ export default function SettingsView(
 
   if (bundle === null) {
     return (
-      <ScrollView testID="settings-view" style={styles.root}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Copilot — Settings</Text>
-          <TouchableOpacity
-            testID="settings-close"
-            accessibilityLabel="Close Copilot settings"
-            onPress={onClose}
-            style={styles.closeBtn}>
-            <Text style={styles.closeBtnText}>×</Text>
-          </TouchableOpacity>
-        </View>
-        <Text testID="settings-bootstrap-loading" style={styles.metaLine}>
-          Loading…
-        </Text>
-      </ScrollView>
+      <View testID="settings-view" style={styles.root}>
+        <StickyTitle onClose={onClose} />
+        <ScrollView style={styles.scrollBody}>
+          <Text testID="settings-bootstrap-loading" style={styles.metaLine}>
+            Loading…
+          </Text>
+        </ScrollView>
+      </View>
     );
   }
 
@@ -329,11 +347,16 @@ function SettingsViewBody(props: {
       writeBack,
       unlocked,
     );
+    // Encryption is gone — exit the sub-screen so the user lands on
+    // the main settings with the now-correct plaintext CTA. Idempotent
+    // when the action was triggered from the main settings already.
+    setSubFlow({kind: 'idle'});
     await refresh();
   }, [bundle.io, bundle.prefsDeps, bundle.vaultDeps, refresh]);
 
   const onResetVault = useCallback(async () => {
     await resetVault({vault: bundle.vaultDeps, prefs: bundle.prefsDeps});
+    setSubFlow({kind: 'idle'});
     await refresh();
   }, [bundle.prefsDeps, bundle.vaultDeps, refresh]);
 
@@ -346,6 +369,47 @@ function SettingsViewBody(props: {
     },
     [bundle.prefsDeps, refresh],
   );
+
+  // Persona is file-based now (MyStyle/SnCopilot/system_prompt.txt).
+  // PersonaSettings still hands us a string-or-null on Save; we
+  // round-trip it through the file. After write, re-read so the UI
+  // reflects whatever the sanitiser actually persisted.
+  const [personaDraft, setPersonaDraft] = useState<string | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const current = await readPersona({io: bundle.io});
+      if (cancelled) {
+        return;
+      }
+      setPersonaDraft(current ?? undefined);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bundle.io]);
+  const onSavePersona = useCallback(
+    async (next: string | null) => {
+      await writePersona({io: bundle.io}, next);
+      const fresh = await readPersona({io: bundle.io});
+      setPersonaDraft(fresh ?? undefined);
+    },
+    [bundle.io],
+  );
+
+  // Custom actions are file-based (custom_actions.txt). No CRUD UI —
+  // we just surface a read-only preview + a Reload button so the
+  // user can verify their edits without restarting the plugin.
+  const [actionsPreview, setActionsPreview] = useState<CustomAction[]>([]);
+  const reloadActionsPreview = useCallback(async () => {
+    const list = await readCustomActions({io: bundle.io});
+    setActionsPreview(list);
+  }, [bundle.io]);
+  useEffect(() => {
+    reloadActionsPreview().catch(() => undefined);
+  }, [reloadActionsPreview]);
 
   // Sub-flow renders take over the entire view.
   if (subFlow.kind === 'pin-setup') {
@@ -368,21 +432,29 @@ function SettingsViewBody(props: {
       />
     );
   }
+  if (subFlow.kind === 'encryption' && state !== null) {
+    return (
+      <EncryptionScreen
+        encryptionMode={prefs.encryptionMode}
+        unlocked={state.kind === 'unlocked'}
+        idleTimeoutMin={prefs.idleTimeoutMin}
+        onEnableEncryption={onEncryptStart}
+        onLockNow={onLockNow}
+        onChangePin={onChangePinStart}
+        onDisableEncryption={onDisable}
+        onResetVault={onResetVault}
+        onIdleTimeoutChange={onIdleTimeoutChange}
+        onBack={() => setSubFlow({kind: 'idle'})}
+      />
+    );
+  }
 
   const showMigrationBanner = state?.kind === 'migrate';
 
   return (
-    <ScrollView testID="settings-view" style={styles.root}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Copilot — Settings</Text>
-        <TouchableOpacity
-          testID="settings-close"
-          accessibilityLabel="Close Copilot settings"
-          onPress={onClose}
-          style={styles.closeBtn}>
-          <Text style={styles.closeBtnText}>×</Text>
-        </TouchableOpacity>
-      </View>
+    <View testID="settings-view" style={styles.root}>
+      <StickyTitle onClose={onClose} />
+      <ScrollView style={styles.scrollBody}>
 
       {showMigrationBanner && state?.kind === 'migrate' ? (
         <MigrationPrompt
@@ -393,8 +465,75 @@ function SettingsViewBody(props: {
         />
       ) : null}
 
+      {/* Compact action row at the top: Refresh / Test Connection /
+          Encryption all on one line. Replaces the three separate
+          sections that wasted vertical space on the e-ink overlay.
+          Test Connection's status output (running spinner, OK, or
+          error) renders BELOW the row as needed. */}
+      <View testID="settings-action-row" style={styles.actionRow}>
+        <TouchableOpacity
+          testID="settings-refresh"
+          accessibilityLabel="Re-scan key files"
+          onPress={refresh}
+          style={styles.actionBtn}>
+          <Text style={styles.actionBtnText}>{'⟳ Refresh'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          testID="settings-test-connection"
+          accessibilityLabel="Test connection"
+          onPress={onTestConnection}
+          disabled={
+            resolution?.kind !== 'ok' || testStatus.kind === 'running'
+          }
+          style={[
+            styles.actionBtn,
+            (resolution?.kind !== 'ok' || testStatus.kind === 'running') &&
+              styles.btnDisabled,
+          ]}>
+          <Text style={styles.actionBtnText}>{'⚡ Test'}</Text>
+        </TouchableOpacity>
+        {state !== null ? (
+          <TouchableOpacity
+            testID="encryption-nav-open"
+            accessibilityLabel="Open encryption settings"
+            onPress={() => setSubFlow({kind: 'encryption'})}
+            style={styles.actionBtn}>
+            <Text style={styles.actionBtnText}>
+              {prefs.encryptionMode === 'encrypted'
+                ? state.kind === 'unlocked'
+                  ? '🔒 Unlocked'
+                  : '🔒 Locked'
+                : '🔒 Encrypt'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {/* Inline test-connection status output. Stays just under the
+          action row so the user sees the result without scrolling. */}
+      {testStatus.kind === 'running' ? (
+        <View testID="settings-test-status" style={styles.testStatusRow}>
+          <ActivityIndicator size="small" color="#000000" />
+          <Text style={styles.testStatusText}>Testing…</Text>
+        </View>
+      ) : null}
+      {testStatus.kind === 'ok' ? (
+        <View testID="settings-test-status" style={styles.testOkBlock}>
+          <Text style={styles.testStatusText}>
+            ✓ Connection OK! ({testStatus.modelId} · {testStatus.latencyMs}ms)
+          </Text>
+        </View>
+      ) : null}
+      {testStatus.kind === 'error' ? (
+        <View testID="settings-test-status" style={styles.testErrorBlock}>
+          <Text style={styles.testErrorText}>
+            ✕ Connection failed: {testStatus.message}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Provider configuration</Text>
+        <Text style={styles.sectionTitle}>Provider</Text>
         {resolution === null ? (
           <Text testID="settings-discovery-loading" style={styles.metaLine}>
             Loading…
@@ -403,13 +542,6 @@ function SettingsViewBody(props: {
         {resolution !== null ? (
           <KeyFileBlock resolution={resolution} />
         ) : null}
-        <TouchableOpacity
-          testID="settings-refresh"
-          accessibilityLabel="Re-scan key files"
-          onPress={refresh}
-          style={styles.refreshBtn}>
-          <Text style={styles.refreshBtnText}>Refresh from disk</Text>
-        </TouchableOpacity>
         {errors.length > 0 ? (
           <View testID="settings-errors" style={styles.errorBlock}>
             <Text style={styles.errorTitle}>Parse errors</Text>
@@ -422,57 +554,16 @@ function SettingsViewBody(props: {
         ) : null}
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Test connection</Text>
-        <TouchableOpacity
-          testID="settings-test-connection"
-          accessibilityLabel="Test connection"
-          onPress={onTestConnection}
-          disabled={
-            resolution?.kind !== 'ok' || testStatus.kind === 'running'
-          }
-          style={[
-            styles.testBtn,
-            (resolution?.kind !== 'ok' || testStatus.kind === 'running') &&
-              styles.btnDisabled,
-          ]}>
-          <Text style={styles.testBtnText}>Test Connection</Text>
-        </TouchableOpacity>
-        {testStatus.kind === 'running' ? (
-          <View testID="settings-test-status" style={styles.testStatusRow}>
-            <ActivityIndicator size="small" color="#000000" />
-            <Text style={styles.testStatusText}>Testing…</Text>
-          </View>
-        ) : null}
-        {testStatus.kind === 'ok' ? (
-          <View testID="settings-test-status" style={styles.testOkBlock}>
-            <Text style={styles.testStatusText}>
-              ✓ Connection OK! ({testStatus.modelId} · {testStatus.latencyMs}ms)
-            </Text>
-          </View>
-        ) : null}
-        {testStatus.kind === 'error' ? (
-          <View testID="settings-test-status" style={styles.testErrorBlock}>
-            <Text style={styles.testErrorText}>
-              ✕ Connection failed: {testStatus.message}
-            </Text>
-          </View>
-        ) : null}
-      </View>
+      <PersonaSettings
+        current={personaDraft}
+        onSave={onSavePersona}
+      />
 
-      {state !== null ? (
-        <EncryptionSettings
-          encryptionMode={prefs.encryptionMode}
-          unlocked={state.kind === 'unlocked'}
-          idleTimeoutMin={prefs.idleTimeoutMin}
-          onEnableEncryption={onEncryptStart}
-          onLockNow={onLockNow}
-          onChangePin={onChangePinStart}
-          onDisableEncryption={onDisable}
-          onResetVault={onResetVault}
-          onIdleTimeoutChange={onIdleTimeoutChange}
-        />
-      ) : null}
+      <CustomActionsSettings
+        actions={actionsPreview}
+        filePath={CUSTOM_ACTIONS_PATH}
+        onReload={reloadActionsPreview}
+      />
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Privacy</Text>
@@ -484,7 +575,35 @@ function SettingsViewBody(props: {
           way, avoid opening sensitive pages while Copilot is active.
         </Text>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
+  );
+}
+
+// Fixed title bar shared by both the bundle-loading state and the
+// main settings render. Sits OUTSIDE the body ScrollView so it stays
+// visible while the user scrolls through the long settings tree.
+function StickyTitle({onClose}: {onClose: () => void}): React.JSX.Element {
+  return (
+    <View style={styles.header}>
+      <View style={styles.titleRow}>
+        <Image
+          testID="settings-title-icon"
+          accessibilityLabel="Copilot icon"
+          source={require('../../assets/copilot_icon.png')}
+          style={styles.titleIcon}
+          resizeMode="contain"
+        />
+        <Text style={styles.title}>Settings</Text>
+      </View>
+      <TouchableOpacity
+        testID="settings-close"
+        accessibilityLabel="Close Copilot settings"
+        onPress={onClose}
+        style={styles.closeBtn}>
+        <Text style={styles.closeBtnText}>×</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -601,15 +720,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingTop: 4,
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#000000',
+    // Body ScrollView lives below this header — the header itself is
+    // a static View so it stays put while the body scrolls.
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+  },
+  titleIcon: {
+    width: 28,
+    height: 28,
+    marginRight: 8,
   },
   title: {
     fontSize: 22,
     fontWeight: '600',
     color: '#000000',
+    flexShrink: 1,
   },
+  scrollBody: {flex: 1},
   body: {fontSize: 14, color: '#000000', marginBottom: 12, lineHeight: 20},
   closeBtn: {
     paddingHorizontal: 12,
@@ -712,18 +846,24 @@ const styles = StyleSheet.create({
     color: '#000000',
     marginBottom: 2,
   },
-  testBtn: {
-    paddingHorizontal: 14,
+  // Compact top action row: three buttons fit on one line.
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  actionBtn: {
+    flex: 1,
     paddingVertical: 8,
+    paddingHorizontal: 6,
     borderWidth: 1,
     borderColor: '#000000',
     borderRadius: 4,
-    alignSelf: 'flex-start',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  testBtnText: {
-    fontSize: 14,
-    color: '#000000',
-  },
+  actionBtnText: {fontSize: 13, color: '#000000', fontWeight: '600'},
   btnDisabled: {
     opacity: 0.4,
   },

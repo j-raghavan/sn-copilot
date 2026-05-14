@@ -15,7 +15,10 @@
  *   - Factory createProviderClient routes by id.
  */
 import {createAnthropicClient} from '../src/providers/anthropic';
-import {createOpenAIClient} from '../src/providers/openai';
+import {
+  createOpenAIClient,
+  usesMaxCompletionTokens,
+} from '../src/providers/openai';
 import {createGeminiClient} from '../src/providers/gemini';
 import {createDeepSeekClient} from '../src/providers/deepseek';
 import {createProviderClient} from '../src/providers/index';
@@ -199,6 +202,72 @@ describe('createOpenAIClient', () => {
 
   it('uses globalThis.fetch when no fetchFn supplied', () => {
     expect(createOpenAIClient().id).toBe('openai');
+  });
+
+  describe('token-cap parameter switch (gpt-5 / o-series)', () => {
+    // gpt-5 family and reasoning models (o1*/o3*/o4*) reject
+    // max_tokens with a 400; legacy models (gpt-4o*, gpt-4-turbo) only
+    // accept max_tokens. Pick per request.
+    const send = async (
+      model: string,
+    ): Promise<{[k: string]: unknown}> => {
+      const fetchFn: FetchSpy = jest.fn().mockResolvedValue(
+        buildOk({choices: [{message: {content: 'ok'}}]}),
+      );
+      const client = createOpenAIClient(fetchFn as unknown as typeof fetch);
+      await client.send(baseReq(), {apiKey: 'k', model});
+      return JSON.parse(fetchFn.mock.calls[0][1].body as string);
+    };
+
+    it('legacy models (gpt-4o-mini) keep max_tokens, no max_completion_tokens', async () => {
+      const body = await send('gpt-4o-mini');
+      expect(body.max_tokens).toBe(64);
+      expect(body.max_completion_tokens).toBeUndefined();
+    });
+
+    it('legacy gpt-4-turbo keeps max_tokens', async () => {
+      const body = await send('gpt-4-turbo');
+      expect(body.max_tokens).toBe(64);
+      expect(body.max_completion_tokens).toBeUndefined();
+    });
+
+    it('gpt-5 sends max_completion_tokens, no max_tokens', async () => {
+      const body = await send('gpt-5');
+      expect(body.max_completion_tokens).toBe(64);
+      expect(body.max_tokens).toBeUndefined();
+    });
+
+    it('gpt-5-mini sends max_completion_tokens', async () => {
+      const body = await send('gpt-5-mini');
+      expect(body.max_completion_tokens).toBe(64);
+      expect(body.max_tokens).toBeUndefined();
+    });
+
+    it('o1-mini sends max_completion_tokens (reasoning family)', async () => {
+      const body = await send('o1-mini');
+      expect(body.max_completion_tokens).toBe(64);
+      expect(body.max_tokens).toBeUndefined();
+    });
+
+    it('o3-mini sends max_completion_tokens', async () => {
+      const body = await send('o3-mini');
+      expect(body.max_completion_tokens).toBe(64);
+      expect(body.max_tokens).toBeUndefined();
+    });
+
+    it('classifier: usesMaxCompletionTokens', () => {
+      expect(usesMaxCompletionTokens('gpt-4o-mini')).toBe(false);
+      expect(usesMaxCompletionTokens('gpt-4-turbo')).toBe(false);
+      expect(usesMaxCompletionTokens('gpt-3.5-turbo')).toBe(false);
+      expect(usesMaxCompletionTokens('gpt-5')).toBe(true);
+      expect(usesMaxCompletionTokens('gpt-5-mini')).toBe(true);
+      expect(usesMaxCompletionTokens('gpt-5-nano')).toBe(true);
+      expect(usesMaxCompletionTokens('GPT-5')).toBe(true);
+      expect(usesMaxCompletionTokens('o1')).toBe(true);
+      expect(usesMaxCompletionTokens('o1-mini')).toBe(true);
+      expect(usesMaxCompletionTokens('o3-mini')).toBe(true);
+      expect(usesMaxCompletionTokens('o4-mini')).toBe(true);
+    });
   });
 });
 

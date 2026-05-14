@@ -45,10 +45,14 @@ type FileEntry = {path: string; type: number};
 const mockListFiles =
   jest.fn<Promise<FileEntry[] | null | undefined>, [string]>();
 mockListFiles.mockResolvedValue(null);
+// Module-level exists mock so tests can advertise specific files as
+// existing. The fileIo bridge gates readBytes on this — if `exists`
+// returns false, fetch is never called and prefs/vault appear empty.
+const mockExists = jest.fn<Promise<boolean>, [string]>(async () => false);
 
 jest.mock('sn-plugin-lib', () => ({
   FileUtils: {
-    exists: jest.fn(async () => false),
+    exists: (p: string) => mockExists(p),
     listFiles: (path: string) => mockListFiles(path),
     deleteFile: jest.fn(async () => true),
     renameToFile: jest.fn(async () => true),
@@ -119,6 +123,35 @@ beforeEach(() => {
   mockListFiles.mockReset();
   mockListFiles.mockResolvedValue(null);
   mockFetch.mockReset();
+  // Default `exists`: the prefs file is reported present so the
+  // first-run routing reads the seeded blob below; every other path
+  // is reported missing (the test fixtures don't write a vault). Tests
+  // that want first-run behavior override mockExists.
+  mockExists.mockReset();
+  mockExists.mockImplementation(async (p: string) =>
+    p.endsWith('.copilot-prefs.json'),
+  );
+  // Default fetch: respond to the prefs file with a "returning user"
+  // prefs blob so the first-run-→-Settings routing doesn't fire. Tests
+  // that want to exercise first-run override this with their own fetch
+  // mock + mockExists tweak.
+  mockFetch.mockImplementation(async (url: string) => {
+    if (String(url).endsWith('.copilot-prefs.json')) {
+      return {
+        ok: true,
+        arrayBuffer: async () =>
+          new TextEncoder().encode(
+            JSON.stringify({
+              version: 1,
+              encryptionMode: 'plaintext',
+              idleTimeoutMin: 10,
+              hasSeenSettings: true,
+            }),
+          ).buffer,
+      };
+    }
+    return {ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0)};
+  });
   // Module-scope state that earlier tests can leak via leftover
   // CopilotPanel mounts (they subscribe via useCopilotState and the
   // tests don't unmount between cases).
@@ -157,7 +190,7 @@ function render(
 }
 
 describe('CopilotPanel — navigation root', () => {
-  it('starts on the ChatView', () => {
+  it('starts on the ChatView for a returning user (hasSeenSettings=true seeded by default)', () => {
     const tree = render();
     expect(findByTestID(tree, 'chat-view')).toBeDefined();
   });
@@ -192,15 +225,135 @@ describe('CopilotPanel — navigation root', () => {
     expect(mockClose).toHaveBeenCalledTimes(1);
   });
 
-  it('honours initialScopeLabel and initialPiiRedaction; provider falls back to "Demo (no key)"', () => {
+  it('honours initialScopeLabel; provider falls back to "Demo (no key)"', () => {
     const tree = render({
       initialScopeLabel: 'Lasso selection',
-      initialPiiRedaction: false,
     });
     const text = findAllText(tree).join(' | ');
     expect(text).toContain('Context: Lasso selection');
     // No key file resolved in test env → fallback provider label
     expect(text).toContain('Demo (no key)');
+  });
+
+  it('first-run (no prefs file) routes to Settings on boot', async () => {
+    // Override the per-test default: report NO files present, including
+    // prefs. readPrefs falls through to defaults → hasSeenSettings is
+    // undefined → first-run effect fires → setView('settings').
+    mockExists.mockImplementation(async () => false);
+    mockFetch.mockImplementation(async () => ({
+      ok: false,
+      status: 404,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }));
+    // Seed at least one resolvable key file via listFiles so state is
+    // 'plaintext' (a routable state). With no key the panel renders
+    // the no-key checklist on ChatView, which is its own branch.
+    mockListFiles.mockResolvedValueOnce([
+      fileEntry(
+        '/storage/emulated/0/MyStyle/SnCopilot/copilot-key-anthropic.txt',
+      ),
+    ]);
+    mockExists.mockImplementation(async (p: string) =>
+      p.endsWith('copilot-key-anthropic.txt'),
+    );
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('copilot-key-anthropic.txt')) {
+        return fileResp(
+          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-x\n',
+        );
+      }
+      return {ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0)};
+    });
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<CopilotPanel />);
+      await flushPromises();
+    });
+    liveTrees.push(tree);
+    await waitForText(tree, 'Settings', 20);
+    expect(findByTestID(tree, 'settings-view')).toBeDefined();
+  });
+
+  it('setHasSeenSettings rejection is swallowed (no crash, Settings still renders)', async () => {
+    mockListFiles.mockResolvedValueOnce([
+      fileEntry(
+        '/storage/emulated/0/MyStyle/SnCopilot/copilot-key-anthropic.txt',
+      ),
+    ]);
+    mockExists.mockImplementation(async (p: string) =>
+      p.endsWith('copilot-key-anthropic.txt'),
+    );
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('copilot-key-anthropic.txt')) {
+        return fileResp(
+          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-x\n',
+        );
+      }
+      return {ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0)};
+    });
+    // Make the prefs write fail so the inline .catch on setHasSeenSettings
+    // runs (defensive guard — UI must not crash on prefs write failure).
+    const writeFileBase64 = jest.requireMock('../src/native/CopilotOverlay')
+      .default.writeFileBase64 as jest.Mock;
+    writeFileBase64.mockImplementation(async () => ({
+      success: false,
+      code: 'WRITE_FAILED',
+      message: 'fixture',
+    }));
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<CopilotPanel />);
+      await flushPromises();
+    });
+    liveTrees.push(tree);
+    await waitForText(tree, 'Settings', 20);
+    expect(findByTestID(tree, 'settings-view')).toBeDefined();
+  });
+
+  it('flips hasSeenSettings on FIRST SHOW (not on close), so a host-level close still records the visit', async () => {
+    // No prefs file → first-run. Seed a single key file so the panel
+    // reaches a routable state instead of the no-key checklist.
+    mockListFiles.mockResolvedValueOnce([
+      fileEntry(
+        '/storage/emulated/0/MyStyle/SnCopilot/copilot-key-anthropic.txt',
+      ),
+    ]);
+    mockExists.mockImplementation(async (p: string) =>
+      p.endsWith('copilot-key-anthropic.txt'),
+    );
+    let prefsWritten: string | null = null;
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('copilot-key-anthropic.txt')) {
+        return fileResp(
+          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-x\n',
+        );
+      }
+      return {ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0)};
+    });
+    // Track the writeFileBase64 calls; setHasSeenSettings writes the
+    // prefs file with hasSeenSettings:true.
+    const writeFileBase64 = jest.requireMock('../src/native/CopilotOverlay')
+      .default.writeFileBase64 as jest.Mock;
+    writeFileBase64.mockImplementation(async (path: string, b64: string) => {
+      if (path.endsWith('.copilot-prefs.json')) {
+        prefsWritten = Buffer.from(b64, 'base64').toString('utf-8');
+      }
+      return {success: true, code: 'OK', message: 'fixture'};
+    });
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<CopilotPanel />);
+      await flushPromises();
+    });
+    liveTrees.push(tree);
+    await waitForText(tree, 'Settings', 20);
+    // The flag write happens immediately on SHOW — no need to tap
+    // the × button. Verify the write landed.
+    await act(async () => {
+      await flushPromises();
+    });
+    expect(prefsWritten).not.toBeNull();
+    expect(prefsWritten ?? '').toContain('"hasSeenSettings":true');
   });
 
   it('shows the resolved provider label when discovery returns one valid file', async () => {
@@ -209,7 +362,25 @@ describe('CopilotPanel — navigation root', () => {
         '/storage/emulated/0/MyStyle/SnCopilot/copilot-key-anthropic.txt',
       ),
     ]);
+    // The fileIo bridge gates fetch on `exists` — both files need to
+    // be reported present or fetch is short-circuited.
+    mockExists.mockImplementation(async (p: string) =>
+      p.endsWith('.copilot-prefs.json') ||
+      p.endsWith('copilot-key-anthropic.txt'),
+    );
     mockFetch.mockImplementation(async (url: string) => {
+      // Prefs read needs to report a "returning user" so the panel
+      // routes to ChatView (this test asserts on the chat surface).
+      if (String(url).endsWith('.copilot-prefs.json')) {
+        return fileResp(
+          JSON.stringify({
+            version: 1,
+            encryptionMode: 'plaintext',
+            idleTimeoutMin: 10,
+            hasSeenSettings: true,
+          }),
+        );
+      }
       if (url.startsWith('file://')) {
         return fileResp(
           'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-x\n',

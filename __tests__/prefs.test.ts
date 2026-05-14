@@ -11,6 +11,7 @@ import {DEFAULT_PREFS, type CopilotPrefs} from '../src/types';
 import {
   readPrefs,
   setEncryptionMode,
+  setHasSeenSettings,
   setIdleTimeoutMin,
   writePrefs,
 } from '../src/storage/prefs';
@@ -159,5 +160,59 @@ describe('setEncryptionMode / setIdleTimeoutMin', () => {
     const r = await setIdleTimeoutMin({io, prefsPath: PREFS_PATH}, 30);
     expect(r.idleTimeoutMin).toBe(30);
     expect(r.encryptionMode).toBe('encrypted');
+  });
+});
+
+
+describe('hasSeenSettings sanitization', () => {
+  it('defaults to undefined when not present', async () => {
+    const io = createInMemoryFileIo();
+    const r = await readPrefs({io, prefsPath: PREFS_PATH});
+    expect(r.hasSeenSettings).toBeUndefined();
+  });
+
+  it('reads true when persisted as true', async () => {
+    const io = createInMemoryFileIo({
+      [PREFS_PATH]: utf8.encode(
+        JSON.stringify({
+          version: 1,
+          encryptionMode: 'plaintext',
+          idleTimeoutMin: 10,
+          hasSeenSettings: true,
+        }),
+      ),
+    });
+    const r = await readPrefs({io, prefsPath: PREFS_PATH});
+    expect(r.hasSeenSettings).toBe(true);
+  });
+
+  it.each([false, 'true' as unknown, 1 as unknown, null, undefined])(
+    'collapses non-true value %p to undefined',
+    async (bad) => {
+      const io = createInMemoryFileIo({
+        [PREFS_PATH]: utf8.encode(
+          JSON.stringify({
+            version: 1,
+            encryptionMode: 'plaintext',
+            idleTimeoutMin: 10,
+            hasSeenSettings: bad,
+          }),
+        ),
+      });
+      const r = await readPrefs({io, prefsPath: PREFS_PATH});
+      expect(r.hasSeenSettings).toBeUndefined();
+    },
+  );
+
+  it('setHasSeenSettings(true) persists; setHasSeenSettings(false) clears', async () => {
+    const io = createInMemoryFileIo();
+    const after = await setHasSeenSettings({io, prefsPath: PREFS_PATH}, true);
+    expect(after.hasSeenSettings).toBe(true);
+    const back = await readPrefs({io, prefsPath: PREFS_PATH});
+    expect(back.hasSeenSettings).toBe(true);
+    const cleared = await setHasSeenSettings({io, prefsPath: PREFS_PATH}, false);
+    expect(cleared.hasSeenSettings).toBeUndefined();
+    const finalBack = await readPrefs({io, prefsPath: PREFS_PATH});
+    expect(finalBack.hasSeenSettings).toBeUndefined();
   });
 });

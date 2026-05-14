@@ -59,7 +59,7 @@ export type VaultDeps = {
 };
 
 export type ReadVaultResult =
-  | {kind: 'ok'; files: KeyFile[]}
+  | {kind: 'ok'; files: KeyFile[]; key: Uint8Array}
   | {kind: 'not-found'}
   | {kind: 'wrong-pin'}
   | {kind: 'corrupt'; reason: string};
@@ -153,6 +153,11 @@ export const deleteVault = async (deps: VaultDeps): Promise<boolean> =>
 // expensive PBKDF2 step. Used by writeVault to verify the bytes
 // round-trip with the in-memory key, which is ~5–10s cheaper on
 // Hermes than re-deriving the same key a second time.
+//
+// The 'ok' result echoes back the key so callers that derived it
+// once (readVault, writeVault verify) don't need to recover it from
+// elsewhere — secureFlows.unlock stashes it into the derivedKey
+// holder so the conversations store can encrypt without re-deriving.
 const decryptVaultBytes = (
   bytes: Uint8Array,
   key: Uint8Array,
@@ -193,7 +198,7 @@ const decryptVaultBytes = (
   if (files === null) {
     return {kind: 'corrupt', reason: 'inner shape != {files: KeyFile[]}'};
   }
-  return {kind: 'ok', files};
+  return {kind: 'ok', files, key};
 };
 
 export const readVault = async (
@@ -247,11 +252,15 @@ export const readVault = async (
   return result;
 };
 
+// Returns the freshly-derived key so callers (secureFlows.encryptInitial
+// / changePin) can promote it into the derivedKey holder without a
+// second PBKDF2 round-trip. The vault file itself stores the salt +
+// iterations needed to re-derive on the next unlock.
 export const writeVault = async (
   deps: VaultDeps,
   passphrase: string,
   files: KeyFile[],
-): Promise<void> => {
+): Promise<{key: Uint8Array}> => {
   const logger = deps.logger ?? noopLogger;
   const salt = await randomBytes(SALT_LENGTH_BYTES);
   const key = await deriveKey(passphrase, salt, DEFAULT_KDF_PARAMS);
@@ -303,4 +312,5 @@ export const writeVault = async (
     throw new Error('vault rename failed; tmp removed, vault not committed');
   }
   logger.log(`${TAG} wrote vault with ${files.length} key file(s)`);
+  return {key};
 };

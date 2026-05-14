@@ -7,7 +7,7 @@
 //   - Text-only providers (DeepSeek) get a usable signal without
 //     needing the image attachment.
 
-import type {PageContext} from '../scope/pageContext';
+import type {PageContext} from './pageContext';
 
 export const composeUserText = (
   trimmedUserInput: string,
