@@ -641,10 +641,11 @@ describe('GrillView — Done screen swap callout', () => {
   });
 });
 
-// Keep the unused block opener so the trailing closing brace below
-// still balances; the rest of the file already has its own describe
-// blocks that follow.
-describe('GrillView — old aggregate (removed) sanity check', () => {
+describe('GrillView — legacy aggregate removed', () => {
+  // Single sanity assertion confirming the model-grading 4-axis bar
+  // chart that used to live on Done is gone. Functional behaviour of
+  // the new layout (quadrant grid, review-these, swap callout) lives
+  // in their own describe blocks above; no need to duplicate here.
   it('does not render a deck-quality aggregate block anymore', async () => {
     const {tree} = renderGrill();
     await flush();
@@ -657,91 +658,6 @@ describe('GrillView — old aggregate (removed) sanity check', () => {
       });
     }
     expect(maybeFindByTestID(tree, 'grill-rubric-aggregate')).toBeNull();
-  });
-
-  it('renders swap callout when a card was swapped (distractor reason)', async () => {
-    const regenBody = JSON.stringify([
-      {
-        id: 'replacement',
-        type: 'inference',
-        stem: 'SWAPPED?',
-        choices: ['W', 'X', 'Y', 'Z'],
-        correctIndex: 0,
-        explanation: 'r',
-        sourceQuote: 'q',
-      },
-    ]);
-    const {tree} = renderGrill(
-      {},
-      scriptedProvider({
-        weakAt: 3,
-        weakAxis: 'distractor',
-        regenerateBody: regenBody,
-      }),
-    );
-    await flush();
-    for (let i = 0; i < 5; i++) {
-      act(() => {
-        findByTestID(tree, 'grill-card-choice-0').props.onPress();
-      });
-      act(() => {
-        findByTestID(tree, 'grill-card-reveal').props.onPress();
-      });
-      await flush();
-    }
-    expect(findByTestID(tree, 'grill-swap-callout')).toBeDefined();
-    const line = textOf(tree, 'grill-swap-callout-3');
-    expect(line).toContain('We swapped card 3');
-    expect(line).toContain('distractors were too easy');
-  });
-
-  it('renders swap callout with factual reason when factual was the weak axis', async () => {
-    const regenBody = JSON.stringify([
-      {
-        id: 'replacement',
-        type: 'inference',
-        stem: 'SWAPPED?',
-        choices: ['W', 'X', 'Y', 'Z'],
-        correctIndex: 0,
-        explanation: 'r',
-        sourceQuote: 'q',
-      },
-    ]);
-    const {tree} = renderGrill(
-      {},
-      scriptedProvider({
-        weakAt: 2,
-        weakAxis: 'factual',
-        regenerateBody: regenBody,
-      }),
-    );
-    await flush();
-    for (let i = 0; i < 5; i++) {
-      act(() => {
-        findByTestID(tree, 'grill-card-choice-0').props.onPress();
-      });
-      act(() => {
-        findByTestID(tree, 'grill-card-reveal').props.onPress();
-      });
-      await flush();
-    }
-    const line = textOf(tree, 'grill-swap-callout-2');
-    expect(line).toContain('We swapped card 2');
-    expect(line).toContain('facts were thin');
-  });
-
-  it('omits the swap callout when no swap happened', async () => {
-    const {tree} = renderGrill();
-    await flush();
-    for (let i = 0; i < 5; i++) {
-      act(() => {
-        findByTestID(tree, 'grill-card-choice-0').props.onPress();
-      });
-      act(() => {
-        findByTestID(tree, 'grill-card-reveal').props.onPress();
-      });
-    }
-    expect(maybeFindByTestID(tree, 'grill-swap-callout')).toBeNull();
   });
 });
 

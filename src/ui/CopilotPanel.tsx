@@ -269,6 +269,15 @@ function CopilotPanelInner(props: InnerProps): React.JSX.Element {
   // currently-open file is a PDF/EPUB (the substrate Grill Me
   // targets). Null while we haven't resolved yet OR the capture
   // failed (capture is best-effort by design).
+  //
+  // KNOWN LIMITATION: pageContext is captured on each sidebar-tap
+  // (see index.js subscribeToButtonEvents) and resolved here once
+  // per panel mount. If the user keeps the overlay open while the
+  // host swaps to a different document — possible but rare — the
+  // Grill availability gate will reflect the file the sidebar tap
+  // captured, not the now-on-screen file. The chat send path has
+  // the same staleness behaviour, so the gate stays consistent
+  // with it. Re-tapping the sidebar refreshes both.
   const [pageContext, setPageContextState] =
     useState<PageContext | null>(null);
   useEffect(() => {

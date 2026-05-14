@@ -1,31 +1,44 @@
-// "Grill Me" screen. Single-surface card flow per the locked plan:
+// "Grill Me" screen. Single-surface card flow:
 //
 //   generating  →  grilling  →  done
 //        │           │           │
 //        ▼           ▼           ▼
-//   one spinner   one card    score + 4-axis bars + Grill again
+//   one spinner   one card    Done screen
 //
-// The rubric (judgeDeck) runs in the BACKGROUND after generation
-// completes. Results land on:
-//   - per-card chip row inside the reveal panel (when the user
-//     answers a card whose score is known)
-//   - aggregate 4-axis bars on the Done screen
-//   - silent regeneration of cards flagged as weak (factual<4 OR
-//     distractor<3); the swap is tracked so the Done screen can say
-//     "we swapped card N — its distractors were too easy".
+// The DONE SCREEN is user-knowledge-centric, not model-grading
+// chrome (matches the convention surveyed across Quizlet, Khan,
+// Duolingo, NotebookLM, Studyly — none surface generation quality
+// to the learner). It renders:
+//   - headline score (X / N)
+//   - a 2×2 quadrant grid breaking accuracy down by question type
+//     (cloze / definition / inference / application). Untested types
+//     render with an em-dash so coverage gaps are visible.
+//   - "Review these" — one card per miss with stem, the user's pick,
+//     the correct answer, and a source quote citation back to the
+//     page (NotebookLM-style).
+//   - swap callout — appears only when a card was silently
+//     regenerated, naming which one and why.
 //
-// "Grill again" rephrases stems AND reshuffles choices, defeating
-// positional pattern matching across revisits. The PREVIOUS pass's
-// background pipeline is aborted before a new deck takes over, so
-// stale regens never poison the rephrased deck (the regen IDs
-// collide because rephrase keeps cardIds).
+// BACKGROUND PIPELINE. judgeDeck runs after generate completes; its
+// 4-axis scores never surface as chrome. They drive silent
+// regeneration of weak cards (factual<4 OR distractor<3) before the
+// user reaches them. The user sees the rubric only indirectly via
+// the swap callout.
+//
+// GRILL AGAIN rephrases stems and reshuffles choices to defeat
+// positional pattern matching across revisits. The previous pass's
+// background pipeline is aborted before the rephrased deck takes
+// over — without that, an in-flight v1 regen would land in
+// pendingRegenRef and swap a v1-flavored card into v2 (rephrase
+// preserves card IDs, so the IDs collide).
 //
 // Constraints honored:
 //   - AbortController + setTimeout pattern from ChatView (not
-//     signal.addEventListener — unreliable on Hermes).
+//     signal.addEventListener — unreliable on Hermes; see CLAUDE.md
+//     memories).
 //   - tryAcquire / release re-entrancy guard so a Grill can't run
 //     concurrently with a chat send.
-//   - No streaming, no multi-turn LLM context, no persistence.
+//   - No streaming, no multi-turn LLM context, no persistence in v1.
 
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
@@ -346,7 +359,22 @@ export default function GrillView(props: GrillViewProps): React.JSX.Element {
     setCurrentIndex(0);
     setSelected(null);
     setSwappedCards([]);
+    // Drop the previous deck's judge scores. v2 has the same card ids
+    // (rephrase preserves them) but different stems / choices order,
+    // so v1's scores no longer describe what's on screen. Without this
+    // reset the swap-reason lookup in onAdvance could resurrect a v1
+    // score for the same id if regen ever wires back in. We don't
+    // re-run judge on the rephrased deck in v1 (intentional, saves an
+    // LLM call) — null state is the honest signal here.
+    setJudgeResult(null);
     try {
+      // rephrase is a single foreground call. We bypass the
+      // generationSignal threading used by generate/judge/regen
+      // because cancelBackground() has already torn down the
+      // previous generation's signal, and rephrase has no peers to
+      // coordinate with — only its own per-call timeout. If a future
+      // change adds "cancel drill mid-rephrase" intent, wire a fresh
+      // AbortController stored in a ref and pass it through here.
       const rephrased = await runWithTimeout(REPHRASE_TIMEOUT_MS, (signal) =>
         rephraseDeck({client, apiKey, model, deck: currentDeck, signal}),
       );
