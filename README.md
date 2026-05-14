@@ -1,7 +1,7 @@
 # Copilot Plugin for Supernote
 
-![Tests](https://img.shields.io/badge/tests-351%20passed-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-99%25%20lines%20%2F%2098%25%20branches-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1000%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-99%25%20lines%20%2F%2097%25%20branches-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-passing-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Supernote-blue)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -36,6 +36,17 @@ https://github.com/user-attachments/assets/a176aae0-a33d-4885-a93f-0a7f63d1e861
 
 https://github.com/user-attachments/assets/4b66eead-0561-4d46-afdd-21919ff1b5be
 
+### v1.0.3
+
+> _Demo recording placeholder — Grill Me on a PDF page + custom persona + custom quick actions._
+
+## What's new in v1.0.3
+
+- **Grill Me** — generate a 5-question multiple-choice drill deck from the current page of any PDF or EPUB. Active recall, not passive summarisation. See [Grill Me](#grill-me-active-recall-from-pdfepub).
+- **Chat history (last 5)** — Copilot remembers your last five conversations across sessions. Tap the ⏱ icon in the chat header to flip between them or start a new one. Encrypted at rest when the vault is encrypted; plaintext alongside the keys otherwise.
+- **Custom persona** — replace the default system prompt with your own. Drop a `system_prompt.txt` into `MyStyle/SnCopilot/`. See [Custom persona](#custom-persona-replace-the-system-prompt).
+- **Custom quick actions** — add up to six of your own tappable action cards (e.g. "Glossary", "Risks", "Translate"). Drop a `custom_actions.txt` into `MyStyle/SnCopilot/`. See [Custom quick actions](#custom-quick-actions).
+- **GPT-5 / o-series compatibility** — OpenAI now sends `max_completion_tokens` for `gpt-5*` and `o1*`/`o3*`/`o4*` reasoning models (which reject the legacy `max_tokens` field). `gpt-4o`, `gpt-4-turbo` etc. keep `max_tokens` as before.
 
 ## Quick start
 
@@ -77,6 +88,84 @@ That's it. There is no account to create, no service to register against, no com
 | DeepSeek | `deepseek-chat` | no — text only | Cheapest LLM available; fine for typed-text notes / extracted PDF text, no image support. |
 
 You can change `model=` to any model the provider exposes — the plugin doesn't allow-list. If a model name is wrong the provider returns an HTTP error, which is shown verbatim in the chat as `Error: <provider>: HTTP <status>`.
+
+> **OpenAI gpt-5 / o-series users:** the plugin auto-detects newer reasoning + GPT-5 family model ids (`gpt-5*`, `o1*`, `o3*`, `o4*`) and sends `max_completion_tokens` instead of the legacy `max_tokens` field that those models reject. You don't need to do anything — just put the model id in `model=` and it works.
+
+## Grill Me — active recall from PDF/EPUB
+
+Tap **Grill Me** on a PDF or EPUB page and Copilot generates a five-question multiple-choice deck from the page content. Each question has one correct answer and three near-miss distractors. You answer them one at a time on a single-surface card flow: stem + 4 choices → tap → reveal (verdict, explanation, source quote) → tap to advance.
+
+The end screen breaks your performance down across four question types (cloze, definition, inference, application) on a 2×2 grid, and lists every card you missed with its source citation back into the page. A background quality pass scores the deck and silently regenerates weak cards before you see them — surveys (Quizlet, Khan, NotebookLM) confirmed learners care about retention, not model self-grading, so the rubric is backstage. **Grill again** rephrases the stems and reshuffles the choices so you can't pattern-match across repeats.
+
+Only available on PDF / EPUB in v1 (handwritten `.note` files produce too-noisy OCR for high-quality stems). No setup — the button appears next to the four built-in actions on the empty-state suggestion grid whenever you open a PDF or EPUB.
+
+## Custom persona — replace the system prompt
+
+Copilot ships with a built-in system prompt tuned for note-taking. You can replace it wholesale by dropping a single text file:
+
+**Path:** `/storage/emulated/0/MyStyle/SnCopilot/system_prompt.txt`
+
+**Format:** no envelope, no key/value pairs — the **entire file content** is the persona. Up to 2000 characters; longer files are dropped at read time. Empty / whitespace-only file → Copilot uses the built-in prompt.
+
+**How to add one:**
+
+1. Create the file with USB / WebDAV / Supernote Cloud, *or* tap the ⚙ Settings cog → **Persona** → edit + Save (Settings writes the file for you).
+2. Restart the overlay (close ×, reopen via sidebar) — the new persona is loaded on next open.
+
+**Sample `system_prompt.txt`:**
+
+```text
+You are a writing coach helping a non-native English speaker
+revise notes and short documents. When you summarise, prefer
+plain words and short sentences. When you explain, give one
+concrete example. Never use the words "essentially",
+"basically", or "in essence". Reply in markdown.
+```
+
+Persona lives plaintext alongside the key files regardless of vault encryption — the user-managed file model is the deliberate choice so you can edit it externally with the same tools you use to manage the API key.
+
+## Custom quick actions
+
+Add up to **six** of your own tappable action cards to the empty-state suggestion grid, alongside the four built-ins (Summarize / Explain / Clarify / Snapshot) and Grill Me. Useful when you want a one-tap prompt that's specific to how *you* take notes.
+
+**Path:** `/storage/emulated/0/MyStyle/SnCopilot/custom_actions.txt`
+
+**Format:** one action per line as `label: prompt`. The first `:` is the separator; the prompt may contain more colons. Lines starting with `#` are comments; blank lines are skipped.
+
+- `label` — under 16 characters, shown on the card.
+- `prompt` — under 500 characters, the canned prompt sent to the LLM when the card is tapped.
+- Hard cap of 6 actions per file; extras are ignored.
+
+**How to add them:**
+
+1. Create the file with USB / WebDAV / Supernote Cloud, *or* tap ⚙ Settings cog → **Custom actions** → edit + Save.
+2. Reopen the chat panel — the new cards appear in the suggestion grid.
+
+**Sample `custom_actions.txt`:**
+
+```text
+# Notes-assistant quick actions. Labels under 16 chars,
+# prompts under 500 chars. Up to 6 entries.
+Glossary: Define every technical term that appears on this page in two sentences each, in plain English.
+Risks: List the risks implied by the content on this page, sorted by severity. One line per risk.
+Translate: Translate the page content into French. Preserve any code blocks and equations verbatim.
+Outline: Produce a hierarchical outline of this page — H1 for the main topic, H2 for sections, bullets for points.
+Cite: List the cited works or external references on this page, with one-line summaries.
+Counter: For each claim on this page, give one plausible counter-argument an expert reviewer might raise.
+```
+
+The plugin **reads** this file; CRUD lives in your text editor of choice, not in the app. The Settings → Custom actions screen shows a read-only preview so you can confirm the file parsed correctly.
+
+## Chat history (last 5)
+
+Copilot now remembers your **last five conversations** across sessions. Tap the ⏱ icon in the chat header to see the list, tap any entry to load it back into the chat, or tap ✎ to start a new one. FIFO eviction — when you start a sixth conversation, the oldest is dropped.
+
+**Where it lives:**
+
+- With **plaintext** encryption mode: a plain JSON file in the plugin's private install folder.
+- With **encrypted** mode (PIN-protected vault): an encrypted envelope in the same folder, decrypted in memory only while the vault is unlocked.
+
+Either way, history never leaves the device (it's part of the same on-device-only privacy posture as the keys themselves).
 
 ## Approximate cost per page summary
 
