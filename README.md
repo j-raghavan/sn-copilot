@@ -38,7 +38,8 @@ https://github.com/user-attachments/assets/4b66eead-0561-4d46-afdd-21919ff1b5be
 
 ### v1.0.3
 
-> _Demo recording placeholder — Grill Me on a PDF page + custom persona + custom quick actions._
+https://github.com/user-attachments/assets/ac096146-8aee-4304-af62-0f9a9776485b
+
 
 ## What's new in v1.0.3
 
