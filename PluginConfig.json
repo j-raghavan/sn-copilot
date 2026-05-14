@@ -2,8 +2,8 @@
   "name": "Copilot",
   "desc": "On-device AI assistant for Supernote notes and PDFs. BYOK — bring your own API key for Anthropic, OpenAI, Google Gemini, or DeepSeek.",
   "iconPath": "assets/icon.png",
-  "versionName": "1.0.2",
-  "versionCode": "10002",
+  "versionName": "1.0.3",
+  "versionCode": "10003",
   "pluginID": "kbpguk1qf26zp9ui",
   "pluginKey": "SnCopilot",
   "jsMainPath": "index"
