@@ -115,7 +115,12 @@ jobs:
       - name: Bump package.json (runner only)
         env:
           VERSION: ${{ steps.ver.outputs.version }}
-        run: npm version "$VERSION" --no-git-tag-version
+        # --allow-same-version keeps the step idempotent: if package.json
+        # is already at the target version (the dev bumped it locally
+        # alongside the feature work), npm prints "Version not changed"
+        # and exits non-zero by default. With this flag the step is a
+        # no-op when versions match, and a real bump otherwise.
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Bump README version badge (runner only)
         env:
