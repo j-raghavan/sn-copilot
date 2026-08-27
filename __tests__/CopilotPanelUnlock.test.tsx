@@ -29,7 +29,7 @@ jest.mock('sn-plugin-lib', () => ({
   },
   PluginManager: {
     registerButtonListener: jest.fn(),
-    addPluginLifeListener: jest.fn(() => ({remove: () => {}})),
+    registerPluginLifeListener: jest.fn(() => ({remove: () => {}})),
     getPluginDirPath: () => mockGetPluginDirPath(),
   },
 }));

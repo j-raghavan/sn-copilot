@@ -62,7 +62,7 @@ const okManager = {
 // note-path tests still pass it in (cheap, keeps the call sites
 // uniform) but never trigger it.
 const okDoc = {
-  generateDocImage: jest.fn(async () => ({success: true, result: true})),
+  generateCurrentDocImage: jest.fn(async () => ({success: true, result: true})),
   getCurrentDocText: jest.fn(async () => ({
     success: true,
     result: 'doc text content',
@@ -82,7 +82,7 @@ beforeEach(() => {
   okFile.getElements.mockClear();
   okFile.getPageSize.mockClear();
   okManager.getPluginDirPath.mockClear();
-  okDoc.generateDocImage.mockClear();
+  okDoc.generateCurrentDocImage.mockClear();
   okDoc.getCurrentDocText.mockClear();
 });
 
@@ -600,11 +600,14 @@ describe('captureCurrentPage — doc path (.pdf / .epub)', () => {
     // Note APIs must NOT be invoked on the doc path.
     expect(okFile.generateNotePng).not.toHaveBeenCalled();
     // Doc API was called with the resolved scratch path + default size.
-    expect(okDoc.generateDocImage).toHaveBeenCalledWith(
-      '/sd/docs/spec.pdf',
+    // generateCurrentDocImage renders the *current* doc, so it takes
+    // no docPath; the trailing 1 asks for text-selection styles
+    // (highlight/underline) to be included in the render.
+    expect(okDoc.generateCurrentDocImage).toHaveBeenCalledWith(
       3,
       ctx?.screenshotPath,
       {width: 1404, height: 1872},
+      1,
     );
     expect(okDoc.getCurrentDocText).toHaveBeenCalledWith(3);
   });
@@ -619,7 +622,7 @@ describe('captureCurrentPage — doc path (.pdf / .epub)', () => {
       logger: silentLogger,
     });
     expect(ctx).not.toBeNull();
-    expect(okDoc.generateDocImage).toHaveBeenCalled();
+    expect(okDoc.generateCurrentDocImage).toHaveBeenCalled();
   });
 
   it('honours docImageSize override', async () => {
@@ -632,21 +635,21 @@ describe('captureCurrentPage — doc path (.pdf / .epub)', () => {
       logger: silentLogger,
       docImageSize: {width: 800, height: 1000},
     });
-    expect(okDoc.generateDocImage).toHaveBeenCalledWith(
-      '/sd/docs/spec.pdf',
+    expect(okDoc.generateCurrentDocImage).toHaveBeenCalledWith(
       3,
       expect.any(String),
       {width: 800, height: 1000},
+      1,
     );
   });
 
-  it('returns null when generateDocImage rejects', async () => {
+  it('returns null when generateCurrentDocImage rejects', async () => {
     const ctx = await captureCurrentPage({
       comm: docComm('/sd/docs/spec.pdf'),
       file: okFile,
       doc: {
         ...okDoc,
-        generateDocImage: jest.fn(async () => {
+        generateCurrentDocImage: jest.fn(async () => {
           throw new Error('render boom');
         }),
       },
@@ -656,17 +659,17 @@ describe('captureCurrentPage — doc path (.pdf / .epub)', () => {
     });
     expect(ctx).toBeNull();
     expect(silentLogger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('generateDocImage threw'),
+      expect.stringContaining('generateCurrentDocImage threw'),
     );
   });
 
-  it('returns null when generateDocImage reports success: false', async () => {
+  it('returns null when generateCurrentDocImage reports success: false', async () => {
     const ctx = await captureCurrentPage({
       comm: docComm('/sd/docs/spec.pdf'),
       file: okFile,
       doc: {
         ...okDoc,
-        generateDocImage: jest.fn(async () => ({success: false})),
+        generateCurrentDocImage: jest.fn(async () => ({success: false})),
       },
       manager: okManager,
       fetchFn: okFetch,
@@ -674,7 +677,7 @@ describe('captureCurrentPage — doc path (.pdf / .epub)', () => {
     });
     expect(ctx).toBeNull();
     expect(silentLogger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('generateDocImage failed'),
+      expect.stringContaining('generateCurrentDocImage failed'),
     );
   });
 

@@ -1,25 +1,32 @@
 /**
  * Tests for src/storage/lifecycleWiring. Pins:
- *   1. installSecureLifecycle subscribes to PluginLifeListener so
- *      onStop wipes sessionKey + stops the idle timer.
+ *   1. installSecureLifecycle subscribes to the plugin life event so
+ *      the `stop` state wipes sessionKey + stops the idle timer.
  *   2. setActiveKeys arms the idle timer using prefs.idleTimeoutMin.
  *   3. clear() / setActiveKeys(null path) stops the idle timer.
  *   4. Idempotent: install + install only registers one set of
  *      subscriptions.
- *   5. PluginManager.addPluginLifeListener throwing is non-fatal.
+ *   5. PluginManager.registerPluginLifeListener throwing is non-fatal.
  */
 
-const lifeListeners: Array<{onStart: () => void; onStop: () => void}> = [];
-const mockAddPluginLifeListener = jest.fn(
-  (listener: {onStart: () => void; onStop: () => void}) => {
-    lifeListeners.push(listener);
-    return {remove: () => {}};
-  },
-);
+// sn-plugin-lib 0.1.65 delivers life events as a raw
+// `onMsg({state})` payload rather than demultiplexed onStart/onStop.
+// `state: 3` is `stop` in the lib's internal PluginLifeType map.
+type LifeListener = {onMsg: (msg: {state?: number}) => void};
+const LIFE_STATE_START = 2;
+const LIFE_STATE_STOP = 3;
+
+const lifeListeners: LifeListener[] = [];
+const mockRegisterPluginLifeListener = jest.fn((listener: LifeListener) => {
+  lifeListeners.push(listener);
+  return {remove: () => {}};
+});
+
+const notifyStop = () => lifeListeners[0].onMsg({state: LIFE_STATE_STOP});
 
 jest.mock('sn-plugin-lib', () => ({
   PluginManager: {
-    addPluginLifeListener: (l: any) => mockAddPluginLifeListener(l),
+    registerPluginLifeListener: (l: any) => mockRegisterPluginLifeListener(l),
   },
 }));
 
@@ -62,7 +69,7 @@ const flushPromises = async () => {
 beforeEach(() => {
   jest.useFakeTimers();
   lifeListeners.length = 0;
-  mockAddPluginLifeListener.mockClear();
+  mockRegisterPluginLifeListener.mockClear();
   sessionTesting.reset();
   derivedKeyTesting.reset();
   idleTesting.reset();
@@ -85,20 +92,20 @@ const setupDeps = async (idleTimeoutMin = 5) => {
 };
 
 describe('installSecureLifecycle', () => {
-  it('subscribes to addPluginLifeListener exactly once', async () => {
+  it('subscribes to registerPluginLifeListener exactly once', async () => {
     const deps = await setupDeps();
     installSecureLifecycle(deps);
     installSecureLifecycle(deps);
-    expect(mockAddPluginLifeListener).toHaveBeenCalledTimes(1);
+    expect(mockRegisterPluginLifeListener).toHaveBeenCalledTimes(1);
   });
 
-  it('onStop wipes sessionKey and stops the idle timer', async () => {
+  it('the stop life state wipes sessionKey and stops the idle timer', async () => {
     const deps = await setupDeps();
     installSecureLifecycle(deps);
     setActiveKeys([f()]);
     await flushPromises();
     expect(isRunning()).toBe(true);
-    lifeListeners[0].onStop();
+    notifyStop();
     expect(isRunning()).toBe(false);
   });
 
@@ -118,7 +125,7 @@ describe('installSecureLifecycle', () => {
     expect(isRunning()).toBe(false);
   });
 
-  it('clearing sessionKey stops the timer (without onStop)', async () => {
+  it('clearing sessionKey stops the timer (without the stop event)', async () => {
     const deps = await setupDeps(5);
     installSecureLifecycle(deps);
     setActiveKeys([f()]);
@@ -128,8 +135,8 @@ describe('installSecureLifecycle', () => {
     expect(isRunning()).toBe(false);
   });
 
-  it('survives addPluginLifeListener throwing (no-throw)', async () => {
-    mockAddPluginLifeListener.mockImplementationOnce(() => {
+  it('survives registerPluginLifeListener throwing (no-throw)', async () => {
+    mockRegisterPluginLifeListener.mockImplementationOnce(() => {
       throw new Error('legacy firmware');
     });
     const log = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -138,21 +145,32 @@ describe('installSecureLifecycle', () => {
     log.mockRestore();
   });
 
-  it('the registered listener exposes a no-op onStart callback', async () => {
+  it('ignores non-stop life states (start, and malformed payloads)', async () => {
     const deps = await setupDeps();
     installSecureLifecycle(deps);
-    // onStart shouldn't throw and shouldn't change session state.
-    expect(() => lifeListeners[0].onStart()).not.toThrow();
+    setActiveKeys([f()]);
+    setDerivedKey(new Uint8Array(32).fill(7));
+    await flushPromises();
+    expect(isRunning()).toBe(true);
+
+    // start / unknown / missing state must not wipe anything.
+    expect(() =>
+      lifeListeners[0].onMsg({state: LIFE_STATE_START}),
+    ).not.toThrow();
+    lifeListeners[0].onMsg({});
+    (lifeListeners[0].onMsg as (m: unknown) => void)(undefined);
+    expect(isRunning()).toBe(true);
+    expect(hasDerivedKey()).toBe(true);
   });
 
-  it('onStop wipes the derived AES key alongside sessionKey', async () => {
+  it('the stop life state wipes the derived AES key alongside sessionKey', async () => {
     const deps = await setupDeps();
     installSecureLifecycle(deps);
     setActiveKeys([f()]);
     setDerivedKey(new Uint8Array(32).fill(7));
     await flushPromises();
     expect(hasDerivedKey()).toBe(true);
-    lifeListeners[0].onStop();
+    notifyStop();
     expect(hasDerivedKey()).toBe(false);
   });
 
