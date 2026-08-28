@@ -81,6 +81,40 @@ AppRegistry.registerComponent('SnCopilotPanel', () => CopilotPanel);
 PluginManager.init();
 installPluginRouter();
 
+// Chauvet enforces per-plugin file permissions. Everything under shared
+// storage (MyStyle, Note, Document, …) is denied by default; only the
+// plugin's own private dir is exempt. Two things are required and BOTH
+// matter: the names must be declared in PluginConfig.json under
+// `uses-permissions` (kebab-case — `usePermissions`/`usesPermissions`
+// parse to null and are silently ignored), and each must then be
+// requested at runtime. Declaration alone leaves hasPermission at 0.
+// Requesting an undeclared name throws "This permission has not been
+// declared." Ref: docs.supernote.com/en/plugin-base/permission
+//
+// Why this is not optional: the framework throws SecurityException from
+// INSIDE RTNFileModule, which has no try/catch and never rejects its
+// promise, so the throw escapes the TurboModule synchronously and the
+// host kills the plugin. A JS try/catch at the call site cannot save us
+// — verified on a Nomad, where SnCopilot died on MyStyle/SnCopilot.
+const requestFilePermissions = async () => {
+  for (const name of [
+    'plugin.permission.FILE:READ',
+    'plugin.permission.FILE:WRITE',
+    'plugin.permission.INTERNET',
+  ]) {
+    try {
+      const had = await PluginManager.hasPermission(name);
+      const got = had > 0 ? had : await PluginManager.requestPermission(name);
+      infoLog(`[COPILOT] permission ${name} -> ${got}`);
+    } catch (e) {
+      // Never fatal: a denied or failed permission degrades the feature
+      // that needs it, it does not take the plugin down.
+      infoLog(`[COPILOT] permission ${name} failed: ${e.message}`);
+    }
+  }
+};
+requestFilePermissions();
+
 // Secure-key-store lifecycle wiring: subscribes to PluginLifeListener
 // so onStop wipes the in-memory derived key, and to sessionKey events
 // so unlock/lock arms/cancels the idle timer. Fire-and-forget — the

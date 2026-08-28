@@ -6,5 +6,10 @@
   "versionCode": "10004",
   "pluginID": "kbpguk1qf26zp9ui",
   "pluginKey": "SnCopilot",
-  "jsMainPath": "index"
+  "jsMainPath": "index",
+  "uses-permissions": [
+    "plugin.permission.FILE:READ",
+    "plugin.permission.FILE:WRITE",
+    "plugin.permission.INTERNET"
+  ]
 }
