@@ -5,7 +5,8 @@
 // different SDK entrypoints:
 //   .note         → PluginFileAPI.generateNotePng + getElements +
 //                   recognizeElements (typed text + handwriting OCR).
-//   .pdf / .epub  → PluginDocAPI.generateDocImage + getCurrentDocText.
+//   .pdf / .epub  → PluginDocAPI.generateCurrentDocImage +
+//                   getCurrentDocText.
 // Other extensions are logged and skipped so the chat degrades
 // gracefully to text-only mode without claiming context it doesn't
 // have.
@@ -20,6 +21,13 @@ const TAG = '[captureScreenshot]';
 // most common form factor and produces a readable page at this
 // resolution. Callers can override via CaptureDeps.docImageSize.
 const DEFAULT_DOC_IMAGE_SIZE = {width: 1404, height: 1872};
+
+// generateCurrentDocImage image type: 0 renders the page without
+// text-selection styles, 1 includes them (highlight, underline, …).
+// We want the render to match what the reader actually sees, and a
+// user's highlights are page content a copilot is routinely asked
+// about ("summarise what I marked"), so we ask for type 1.
+const DOC_IMAGE_TYPE_WITH_SELECTION = 1;
 
 export type CommLike = {
   getCurrentFilePath: () => Promise<unknown>;
@@ -45,11 +53,13 @@ export type FileApiLike = {
 };
 
 export type DocApiLike = {
-  generateDocImage: (
-    docPath: string,
+  // Renders a page of the *currently open* document; unlike the
+  // pre-0.1.65 generateDocImage it takes no docPath.
+  generateCurrentDocImage: (
     page: number,
     pngPath: string,
     size: {width: number; height: number},
+    type: number,
   ) => Promise<unknown>;
   getCurrentDocText: (page: number) => Promise<unknown>;
 };
@@ -408,9 +418,16 @@ const captureDocPage = async (
 
   let renderResp: unknown;
   try {
-    renderResp = await deps.doc.generateDocImage(docPath, page, pngPath, size);
+    renderResp = await deps.doc.generateCurrentDocImage(
+      page,
+      pngPath,
+      size,
+      DOC_IMAGE_TYPE_WITH_SELECTION,
+    );
   } catch (e) {
-    logger.warn(`${TAG} generateDocImage threw: ${(e as Error).message}`);
+    logger.warn(
+      `${TAG} generateCurrentDocImage threw: ${(e as Error).message}`,
+    );
     return null;
   }
   if (
@@ -419,7 +436,7 @@ const captureDocPage = async (
     (renderResp as {success?: unknown}).success !== true
   ) {
     logger.warn(
-      `${TAG} generateDocImage failed: ${JSON.stringify(renderResp)}`,
+      `${TAG} generateCurrentDocImage failed: ${JSON.stringify(renderResp)}`,
     );
     // The render may have left a partial file behind — discard it.
     await discardScratch(deps, pngPath, logger);

@@ -85,13 +85,56 @@ AppRegistry.registerComponent('SnCopilotPanel', () => CopilotPanel);
 PluginManager.init();
 installPluginRouter();
 
-// Reclaim disk from old plugin versions. PluginHost keeps every past
-// version's files (app_<ts>.npk / _libs / oat artifacts) on reinstall
-// — the plugin's on-device footprint otherwise grows by its full size
-// with every update, forever. We run inside the PluginHost process,
-// so we can prune our own stale versions. Fire-and-forget: a cleanup
-// failure must never block bootstrap.
-(async () => {
+// Chauvet enforces per-plugin file permissions. Everything under shared
+// storage (MyStyle, Note, Document, …) is denied by default; only the
+// plugin's own private dir is exempt. Two things are required and BOTH
+// matter: the names must be declared in PluginConfig.json under
+// `uses-permissions` (kebab-case — `usePermissions`/`usesPermissions`
+// parse to null and are silently ignored), and each must then be
+// requested at runtime. Declaration alone leaves hasPermission at 0.
+// Requesting an undeclared name throws "This permission has not been
+// declared." Ref: docs.supernote.com/en/plugin-base/permission
+//
+// Why this is not optional: the framework throws SecurityException from
+// INSIDE RTNFileModule, which has no try/catch and never rejects its
+// promise, so the throw escapes the TurboModule synchronously and the
+// host kills the plugin. A JS try/catch at the call site cannot save us
+// — verified on a Nomad, where SnCopilot died on MyStyle/SnCopilot.
+//
+// FILE:DELETE joins the set now that the scratch sweep and the version
+// janitor both delete files; it was deliberately omitted while nothing
+// on master did.
+const requestFilePermissions = async () => {
+  for (const name of [
+    'plugin.permission.FILE:READ',
+    'plugin.permission.FILE:WRITE',
+    'plugin.permission.FILE:DELETE',
+    'plugin.permission.INTERNET',
+  ]) {
+    try {
+      const had = await PluginManager.hasPermission(name);
+      const got = had > 0 ? had : await PluginManager.requestPermission(name);
+      infoLog(`[COPILOT] permission ${name} -> ${got}`);
+    } catch (e) {
+      // Never fatal: a denied or failed permission degrades the feature
+      // that needs it, it does not take the plugin down.
+      infoLog(`[COPILOT] permission ${name} failed: ${e.message}`);
+    }
+  }
+};
+
+// Everything that touches files waits for the permission grants. Both
+// housekeeping passes DELETE, so firing them as bare top-level
+// fire-and-forgets would race the requests above and hit the
+// uncatchable SecurityException path described there.
+const bootstrapHousekeeping = async () => {
+  await requestFilePermissions();
+
+  // Reclaim disk from old plugin versions. PluginHost keeps every past
+  // version's files (app_<ts>.npk / _libs / oat artifacts) on reinstall
+  // — the plugin's on-device footprint otherwise grows by its full size
+  // with every update, forever. We run inside the PluginHost process,
+  // so we can prune our own stale versions.
   try {
     const dir = await PluginManager.getPluginDirPath();
     if (dir) {
@@ -106,7 +149,21 @@ installPluginRouter();
   } catch (e) {
     console.log('[COPILOT] janitor failed:', String(e));
   }
-})();
+
+  // Purge scratch PNGs left behind by interrupted captures or by plugin
+  // versions that predate per-capture deletion. Each orphan is a full
+  // render of a page the user had open — they should never persist.
+  try {
+    await sweepScratchOrphans({
+      manager: PluginManager,
+      listFiles: path => FileUtils.listFiles(path),
+      deleteFile: path => FileUtils.deleteFile(path),
+    });
+  } catch (e) {
+    console.log('[COPILOT] scratch sweep failed:', String(e));
+  }
+};
+bootstrapHousekeeping();
 
 // Secure-key-store lifecycle wiring: subscribes to PluginLifeListener
 // so onStop wipes the in-memory derived key, and to sessionKey events
@@ -123,18 +180,6 @@ buildWiringBundle()
       String(err),
     );
   });
-
-// Purge scratch PNGs left behind by interrupted captures or by plugin
-// versions that predate per-capture deletion. Each orphan is a full
-// render of a page the user had open — they should never persist.
-// Fire-and-forget: a sweep failure must not block bootstrap.
-sweepScratchOrphans({
-  manager: PluginManager,
-  listFiles: path => FileUtils.listFiles(path),
-  deleteFile: path => FileUtils.deleteFile(path),
-}).catch(e => {
-  console.log('[COPILOT] scratch sweep failed:', String(e));
-});
 
 // Route the sidebar button click into the native overlay.
 // Subscribing here (rather than installing a second listener) keeps

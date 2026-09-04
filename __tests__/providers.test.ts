@@ -538,7 +538,9 @@ describe('createAnthropicClient — prompt caching', () => {
       }),
     );
 
-  const sentBody = async (req: ReturnType<typeof baseReq>) => {
+  const sentBody = async (
+    req: ReturnType<typeof baseReq> & {imageBase64?: string},
+  ) => {
     const fetchFn = okFetch();
     const client = createAnthropicClient(fetchFn as unknown as typeof fetch);
     await client.send(req, {apiKey: 'k', model: 'm'});

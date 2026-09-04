@@ -1,6 +1,6 @@
 {
   "name": "SnCopilot",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "On-device AI assistant for Supernote notes and PDFs. BYOK — bring your own API key for Anthropic, OpenAI, Google Gemini, or DeepSeek.",
   "private": true,
   "scripts": {
@@ -16,7 +16,7 @@
     "react": "19.0.0",
     "react-native": "0.79.2",
     "react-native-markdown-display": "^7.0.2",
-    "sn-plugin-lib": "^0.1.34"
+    "sn-plugin-lib": "^0.1.65"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
