@@ -7,6 +7,7 @@ import {
   PluginCommAPI,
   PluginFileAPI,
   PluginDocAPI,
+  FileUtils,
 } from 'sn-plugin-lib';
 import {
   installPluginRouter,
@@ -16,7 +17,10 @@ import {
 } from './src/pluginRouter';
 import CopilotOverlay from './src/native/CopilotOverlay';
 import {debugLog, infoLog} from './src/diagnostics/log';
-import {captureCurrentPage} from './src/scope/captureScreenshot';
+import {
+  captureCurrentPage,
+  sweepScratchOrphans,
+} from './src/scope/captureScreenshot';
 import {setPageContextPromise} from './src/scope/pageContext';
 import {buildWiringBundle} from './src/storage/wiring';
 import {installSecureLifecycle} from './src/storage/lifecycleWiring';
@@ -96,10 +100,15 @@ installPluginRouter();
 // promise, so the throw escapes the TurboModule synchronously and the
 // host kills the plugin. A JS try/catch at the call site cannot save us
 // — verified on a Nomad, where SnCopilot died on MyStyle/SnCopilot.
+//
+// FILE:DELETE joins the set now that the scratch sweep and the version
+// janitor both delete files; it was deliberately omitted while nothing
+// on master did.
 const requestFilePermissions = async () => {
   for (const name of [
     'plugin.permission.FILE:READ',
     'plugin.permission.FILE:WRITE',
+    'plugin.permission.FILE:DELETE',
     'plugin.permission.INTERNET',
   ]) {
     try {
@@ -113,7 +122,48 @@ const requestFilePermissions = async () => {
     }
   }
 };
-requestFilePermissions();
+
+// Everything that touches files waits for the permission grants. Both
+// housekeeping passes DELETE, so firing them as bare top-level
+// fire-and-forgets would race the requests above and hit the
+// uncatchable SecurityException path described there.
+const bootstrapHousekeeping = async () => {
+  await requestFilePermissions();
+
+  // Reclaim disk from old plugin versions. PluginHost keeps every past
+  // version's files (app_<ts>.npk / _libs / oat artifacts) on reinstall
+  // — the plugin's on-device footprint otherwise grows by its full size
+  // with every update, forever. We run inside the PluginHost process,
+  // so we can prune our own stale versions.
+  try {
+    const dir = await PluginManager.getPluginDirPath();
+    if (dir) {
+      const r = await CopilotOverlay.cleanupOldVersions(dir);
+      if (r.success && r.freedBytes > 0) {
+        infoLog(
+          `[COPILOT] janitor freed ${Math.round(r.freedBytes / 1024)} KiB ` +
+            `(kept version ${r.kept})`,
+        );
+      }
+    }
+  } catch (e) {
+    console.log('[COPILOT] janitor failed:', String(e));
+  }
+
+  // Purge scratch PNGs left behind by interrupted captures or by plugin
+  // versions that predate per-capture deletion. Each orphan is a full
+  // render of a page the user had open — they should never persist.
+  try {
+    await sweepScratchOrphans({
+      manager: PluginManager,
+      listFiles: path => FileUtils.listFiles(path),
+      deleteFile: path => FileUtils.deleteFile(path),
+    });
+  } catch (e) {
+    console.log('[COPILOT] scratch sweep failed:', String(e));
+  }
+};
+bootstrapHousekeeping();
 
 // Secure-key-store lifecycle wiring: subscribes to PluginLifeListener
 // so onStop wipes the in-memory derived key, and to sessionKey events
@@ -161,6 +211,7 @@ subscribeToButtonEvents(async event => {
     doc: PluginDocAPI,
     manager: PluginManager,
     logger: consoleLogger,
+    deleteFile: path => FileUtils.deleteFile(path),
   }).catch(e => {
     console.log('[COPILOT] captureCurrentPage threw', String(e));
     return null;

@@ -130,6 +130,12 @@ export type ConversationMessage = {
   // bubble in ChatView still discriminates on role.
   modelId?: string;
   latencyMs?: number;
+  // True when this assistant bubble is a locally-generated error
+  // notice ("Error: ..."), not a real provider reply. Persisted so a
+  // restored conversation keeps the distinction — otherwise the flag
+  // is lost on reload and the notice gets replayed to the model as
+  // though the assistant had said it.
+  isError?: boolean;
   // Unix ms. Drives the history list sort and the preview banner.
   createdAt: number;
 };

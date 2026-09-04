@@ -12,6 +12,8 @@
  *      (1404x1872, the 7.8" portrait baseline).
  *   7. Failures from CopilotOverlay.open and captureCurrentPage are
  *      logged but do not crash the bootstrap.
+ *   8. The scratch-orphan sweep fires at bootstrap and the capture
+ *      deps carry a deleteFile bridge.
  */
 
 const registerButtonListenerCalls: Array<{
@@ -51,11 +53,17 @@ jest.mock('sn-plugin-lib', () => ({
   FileUtils: {
     exists: jest.fn(async () => false),
     listFiles: jest.fn(async () => null),
+    deleteFile: jest.fn(async () => true),
   },
 }));
 
 const mockOpen = jest.fn();
 const mockGetScreenSize = jest.fn();
+const mockCleanupOldVersions = jest.fn(async (..._args: unknown[]) => ({
+  success: true,
+  freedBytes: 0,
+  kept: 'none',
+}));
 
 jest.mock('../src/native/CopilotOverlay', () => {
   const {
@@ -78,13 +86,20 @@ jest.mock('../src/native/CopilotOverlay', () => {
       writeFileBase64: jest.fn(async () => ({success: true, code: 'OK', message: ''})),
       cryptoPbkdf2Sha256: jest.fn(cryptoPbkdf2Sha256MockImpl),
       cryptoRandomBytes: jest.fn(cryptoRandomBytesMockImpl),
+      cleanupOldVersions: (...args: unknown[]) =>
+        mockCleanupOldVersions(...args),
     },
   };
 });
 
 const mockCaptureCurrentPage = jest.fn();
+const mockSweepScratchOrphans = jest.fn(
+  async (..._args: unknown[]) => 0,
+);
 jest.mock('../src/scope/captureScreenshot', () => ({
   captureCurrentPage: (...args: unknown[]) => mockCaptureCurrentPage(...args),
+  sweepScratchOrphans: (...args: unknown[]) =>
+    mockSweepScratchOrphans(...args),
 }));
 
 const mockSetPageContextPromise = jest.fn();
@@ -136,6 +151,8 @@ describe('index.js bootstrap', () => {
     });
     mockCaptureCurrentPage.mockReset();
     mockCaptureCurrentPage.mockResolvedValue(null);
+    mockCleanupOldVersions.mockClear();
+    mockSweepScratchOrphans.mockClear();
     mockSetPageContextPromise.mockClear();
     const {__testing__} = require('../src/pluginRouter');
     __testing__.reset();
@@ -151,6 +168,83 @@ describe('index.js bootstrap', () => {
   const importBootstrap = (): void => {
     require('../index.js');
   };
+
+  it('runs the old-version janitor at bootstrap with the plugin dir', async () => {
+    importBootstrap();
+    await drainMicrotasks();
+    expect(mockCleanupOldVersions).toHaveBeenCalledWith('/sd/copilot');
+  });
+
+  it('bootstrap survives a janitor failure', async () => {
+    mockCleanupOldVersions.mockRejectedValueOnce(new Error('sweep boom'));
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      importBootstrap();
+      await drainMicrotasks();
+      expect(mockInit).toHaveBeenCalledTimes(1);
+      expect(
+        log.mock.calls.some(c => c.join(' ').includes('janitor failed')),
+      ).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('fires the scratch-orphan sweep at bootstrap with wired file bridges', async () => {
+    importBootstrap();
+    await drainMicrotasks();
+    expect(mockSweepScratchOrphans).toHaveBeenCalledTimes(1);
+    const deps = mockSweepScratchOrphans.mock.calls[0][0] as {
+      manager: unknown;
+      listFiles: unknown;
+      deleteFile: unknown;
+    };
+    expect(deps.manager).toBeDefined();
+    // Invoke the bridges rather than only type-checking them: these
+    // thin lambdas are the whole wiring, and a wrong FileUtils method
+    // name here fails only at runtime on device.
+    const {FileUtils} = jest.requireMock('sn-plugin-lib') as {
+      FileUtils: {
+        listFiles: jest.Mock;
+        deleteFile: jest.Mock;
+      };
+    };
+    await (deps.listFiles as (p: string) => Promise<unknown>)('/plugin/dir');
+    expect(FileUtils.listFiles).toHaveBeenCalledWith('/plugin/dir');
+    await (deps.deleteFile as (p: string) => Promise<unknown>)('/plugin/x.png');
+    expect(FileUtils.deleteFile).toHaveBeenCalledWith('/plugin/x.png');
+  });
+
+  it('bootstrap survives a scratch-sweep failure', async () => {
+    mockSweepScratchOrphans.mockRejectedValueOnce(new Error('sweep boom'));
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      importBootstrap();
+      await drainMicrotasks();
+      expect(mockInit).toHaveBeenCalledTimes(1);
+      expect(
+        log.mock.calls.some(c => c.join(' ').includes('scratch sweep failed')),
+      ).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('passes a deleteFile bridge into the sidebar capture deps', async () => {
+    importBootstrap();
+    registerButtonListenerCalls[0].onButtonPress(okEvent(100)); // sidebar id
+    await drainMicrotasks();
+    const deps = mockCaptureCurrentPage.mock.calls[0][0] as {
+      deleteFile?: unknown;
+    };
+    const {FileUtils} = jest.requireMock('sn-plugin-lib') as {
+      FileUtils: {deleteFile: jest.Mock};
+    };
+    await (deps.deleteFile as (p: string) => Promise<unknown>)(
+      '/plugin/scratch.png',
+    );
+    expect(FileUtils.deleteFile).toHaveBeenCalledWith('/plugin/scratch.png');
+  });
 
   it('registers App + SnCopilotPanel components and inits the plugin manager', () => {
     importBootstrap();

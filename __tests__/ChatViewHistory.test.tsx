@@ -16,6 +16,8 @@
  *      (history grows to two entries).
  *   8. FIFO cap of 5 is preserved (older convs evicted on overflow).
  *   9. Encrypted mode with key set produces an envelope on disk.
+ *  10. isError survives the save/load round-trip, so a restored
+ *      failure notice is still excluded from replayed history.
  */
 // Pulled in via require() inside the useProviderClient mock factory.
 
@@ -68,6 +70,7 @@ import {
   saveConversation,
   type ConversationsDeps,
 } from '../src/storage/conversations';
+import {buildProviderHistory} from '../src/ui/providerHistory';
 import {createInMemoryFileIo, type InMemoryFileIo} from './helpers/inMemoryFileIo';
 import {findByTestID, maybeFindByTestID, findAllText} from './helpers/textTraversal';
 
@@ -206,6 +209,45 @@ describe('ChatView — persistence (plaintext)', () => {
     expect(text).toContain('previous answer');
     // History icon is now visible.
     expect(maybeFindByTestID(tree, 'chat-history')).not.toBeNull();
+  });
+
+  it('preserves the isError flag across a save/load round-trip', async () => {
+    // The flag is what keeps a failure notice out of the replayed
+    // history. If persistence dropped it, the notice would come back
+    // from disk indistinguishable from a real reply and be sent to
+    // the provider as though the assistant had produced it.
+    const io = createInMemoryFileIo();
+    const deps = makeDeps(io);
+    const withError: Conversation = {
+      id: 'err-1',
+      createdAt: 100,
+      updatedAt: 200,
+      providerId: 'anthropic',
+      messages: [
+        {id: 'mA', role: 'user', text: 'summarize', createdAt: 100},
+        {
+          id: 'mB',
+          role: 'assistant',
+          text: 'Error: anthropic: HTTP 429',
+          isError: true,
+          createdAt: 110,
+        },
+        {id: 'mC', role: 'user', text: 'summarize', createdAt: 120},
+        {id: 'mD', role: 'assistant', text: 'real answer', createdAt: 130},
+      ],
+    };
+    await saveConversation(deps, withError);
+    const loaded = await loadConversations(deps);
+    const restored = loaded[0].messages;
+    expect(restored[1].isError).toBe(true);
+    // And a genuine reply is not accidentally tagged.
+    expect(restored[3].isError).toBeUndefined();
+    // The restored list still feeds buildProviderHistory, which drops
+    // the flagged turn — pinned in providerHistory.test.ts.
+    expect(buildProviderHistory(restored)).toEqual([
+      {role: 'user', text: 'summarize\n\nsummarize'},
+      {role: 'assistant', text: 'real answer'},
+    ]);
   });
 
   it('history list shows after restore and exposes preview lines', async () => {

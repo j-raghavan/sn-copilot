@@ -10,6 +10,7 @@
   "uses-permissions": [
     "plugin.permission.FILE:READ",
     "plugin.permission.FILE:WRITE",
+    "plugin.permission.FILE:DELETE",
     "plugin.permission.INTERNET"
   ]
 }

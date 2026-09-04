@@ -44,6 +44,13 @@ const mockCryptoRandomBytes = jest.fn(
     bytesB64: 'AQID',
   }),
 );
+const mockCleanupOldVersions = jest.fn(
+  async (..._args: unknown[]) => ({
+    success: true,
+    freedBytes: 4096,
+    kept: '1748000000000',
+  }),
+);
 
 const fakeNative = {
   open: (...args: unknown[]) => mockOpen(...args),
@@ -55,6 +62,7 @@ const fakeNative = {
   writeFileBase64: (...args: unknown[]) => mockWriteFileBase64(...args),
   cryptoPbkdf2Sha256: (...args: unknown[]) => mockCryptoPbkdf2Sha256(...args),
   cryptoRandomBytes: (...args: unknown[]) => mockCryptoRandomBytes(...args),
+  cleanupOldVersions: (...args: unknown[]) => mockCleanupOldVersions(...args),
 };
 
 const nativeModulesMock: {CopilotOverlay?: typeof fakeNative} = {
@@ -286,5 +294,38 @@ describe('CopilotOverlay (host without new crypto methods)', () => {
     };
     const r = await cryptoRandomBytes(16);
     expect(r.code).toBe('MODULE_MISSING');
+  });
+});
+
+describe('CopilotOverlay (janitor wrapper)', () => {
+  it('forwards cleanupOldVersions and returns the CleanupResult', async () => {
+    nativeModulesMock.CopilotOverlay = fakeNative;
+    const r = await CopilotOverlay.cleanupOldVersions('/data/plugin/dir');
+    expect(mockCleanupOldVersions).toHaveBeenCalledWith('/data/plugin/dir');
+    expect(r).toEqual({
+      success: true,
+      freedBytes: 4096,
+      kept: '1748000000000',
+    });
+  });
+
+  it('returns a structured failure when the module is missing', async () => {
+    nativeModulesMock.CopilotOverlay = undefined;
+    const r = await CopilotOverlay.cleanupOldVersions('/data/plugin/dir');
+    expect(r.success).toBe(false);
+    expect(r.freedBytes).toBe(0);
+    expect(r.kept).toBe('none');
+    nativeModulesMock.CopilotOverlay = fakeNative;
+  });
+
+  it('returns a structured failure when the host lacks the method', async () => {
+    const withoutJanitor = {...fakeNative} as Record<string, unknown>;
+    delete withoutJanitor.cleanupOldVersions;
+    nativeModulesMock.CopilotOverlay =
+      withoutJanitor as unknown as typeof fakeNative;
+    const r = await CopilotOverlay.cleanupOldVersions('/data/plugin/dir');
+    expect(r.success).toBe(false);
+    expect(r.kept).toBe('none');
+    nativeModulesMock.CopilotOverlay = fakeNative;
   });
 });

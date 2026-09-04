@@ -58,11 +58,18 @@ export const createOpenAIClient = (
     const tokenCap = usesMaxCompletionTokens(opts.model)
       ? {max_completion_tokens: req.maxTokens}
       : {max_tokens: req.maxTokens};
+    // Prior turns slot between the system message and the current
+    // user message, mirroring the transcript order the API expects.
+    const history = (req.history ?? []).map(t => ({
+      role: t.role,
+      content: t.text,
+    }));
     const body = {
       model: opts.model,
       ...tokenCap,
       messages: [
         {role: 'system', content: req.systemPrompt},
+        ...history,
         {role: 'user', content: userContent},
       ],
     };

@@ -16,7 +16,10 @@
  *   9. fetch returns ok=false → null.
  *  10. fetch throws → null.
  */
-import {captureCurrentPage} from '../src/scope/captureScreenshot';
+import {
+  captureCurrentPage,
+  sweepScratchOrphans,
+} from '../src/scope/captureScreenshot';
 
 const silentLogger = {log: jest.fn(), warn: jest.fn()};
 
@@ -713,5 +716,387 @@ describe('captureCurrentPage — doc path (.pdf / .epub)', () => {
       logger: silentLogger,
     });
     expect(ctx?.pageText).toBe('');
+  });
+});
+
+describe('captureCurrentPage — scratch PNG deletion', () => {
+  // Same shape as the doc-path describe's helper — scoped there, so
+  // redeclared here for the one doc-path deletion test.
+  const docComm = (path: string) => ({
+    ...okComm,
+    getCurrentFilePath: jest.fn(async () => ({success: true, result: path})),
+    getCurrentPageNum: jest.fn(async () => ({success: true, result: 3})),
+  });
+
+  it('deletes the scratch PNG after a successful .note capture', async () => {
+    const deleteFile = jest.fn(async () => true);
+    const ctx = await captureCurrentPage({
+      comm: okComm,
+      file: okFile,
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+      deleteFile,
+    });
+    expect(ctx).not.toBeNull();
+    expect(deleteFile).toHaveBeenCalledTimes(1);
+    expect(deleteFile).toHaveBeenCalledWith(ctx?.screenshotPath);
+    // The base64 was read BEFORE deletion — still fully usable.
+    expect(ctx?.screenshotBase64.length).toBeGreaterThan(0);
+  });
+
+  it('deletes the scratch PNG after a successful doc capture', async () => {
+    const deleteFile = jest.fn(async () => true);
+    const ctx = await captureCurrentPage({
+      comm: docComm('/sd/docs/spec.pdf'),
+      file: okFile,
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+      deleteFile,
+    });
+    expect(ctx).not.toBeNull();
+    expect(deleteFile).toHaveBeenCalledTimes(1);
+    expect(deleteFile).toHaveBeenCalledWith(ctx?.screenshotPath);
+  });
+
+  it('deletes the scratch PNG even when the file:// read fails', async () => {
+    const deleteFile = jest.fn(async () => true);
+    const failFetch = jest.fn(async () => ({
+      ok: false,
+      status: 404,
+    })) as unknown as typeof fetch;
+    const ctx = await captureCurrentPage({
+      comm: okComm,
+      file: okFile,
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: failFetch,
+      logger: silentLogger,
+      deleteFile,
+    });
+    expect(ctx).toBeNull();
+    expect(deleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('attempts deletion of a partial file when generateNotePng fails', async () => {
+    const deleteFile = jest.fn(async () => true);
+    const ctx = await captureCurrentPage({
+      comm: okComm,
+      file: {
+        ...okFile,
+        generateNotePng: jest.fn(async () => ({success: false})),
+      },
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+      deleteFile,
+    });
+    expect(ctx).toBeNull();
+    expect(deleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('capture still succeeds when deleteFile throws', async () => {
+    const deleteFile = jest.fn(async () => {
+      throw new Error('delete boom');
+    });
+    const ctx = await captureCurrentPage({
+      comm: okComm,
+      file: okFile,
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+      deleteFile,
+    });
+    expect(ctx).not.toBeNull();
+    expect(silentLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('scratch delete threw'),
+    );
+  });
+
+  it('warns (but succeeds) when deleteFile returns false', async () => {
+    const deleteFile = jest.fn(async () => false);
+    const ctx = await captureCurrentPage({
+      comm: okComm,
+      file: okFile,
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+      deleteFile,
+    });
+    expect(ctx).not.toBeNull();
+    expect(silentLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('scratch delete returned false'),
+    );
+  });
+
+  it('does not attempt deletion when deleteFile is not provided (legacy deps)', async () => {
+    const ctx = await captureCurrentPage({
+      comm: okComm,
+      file: okFile,
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: okFetch,
+      logger: silentLogger,
+    });
+    expect(ctx).not.toBeNull();
+    // No warn about scratch deletion in the no-deleteFile mode.
+    expect(silentLogger.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('scratch delete'),
+    );
+  });
+});
+
+describe('sweepScratchOrphans', () => {
+  const scratchDir = '/data/user/0/com.sncopilot/files';
+
+  const entry = (name: string, type = 1) => ({
+    path: `${scratchDir}/${name}`,
+    type,
+  });
+
+  it('removes only files matching the scratch pattern', async () => {
+    const deleteFile = jest.fn(async () => true);
+    const removed = await sweepScratchOrphans({
+      manager: okManager,
+      listFiles: jest.fn(async () => [
+        entry('copilot-page-1748000000000-0.png'),
+        entry('copilot-page-1748000000001-3.png'),
+        entry('copilot-conversations.json'),
+        entry('copilot-page-not-numeric.png'),
+        entry('user-photo copilot-page-1-1.png'),
+        entry('copilot-page-1748000000002-4.png', 0), // directory — skipped
+      ]),
+      deleteFile,
+      logger: silentLogger,
+    });
+    expect(removed).toBe(2);
+    expect(deleteFile).toHaveBeenCalledTimes(2);
+    expect(deleteFile).toHaveBeenCalledWith(
+      `${scratchDir}/copilot-page-1748000000000-0.png`,
+    );
+    expect(deleteFile).toHaveBeenCalledWith(
+      `${scratchDir}/copilot-page-1748000000001-3.png`,
+    );
+  });
+
+  it('returns 0 when the directory is empty or unlistable', async () => {
+    const deleteFile = jest.fn(async () => true);
+    expect(
+      await sweepScratchOrphans({
+        manager: okManager,
+        listFiles: jest.fn(async () => []),
+        deleteFile,
+        logger: silentLogger,
+      }),
+    ).toBe(0);
+    expect(
+      await sweepScratchOrphans({
+        manager: okManager,
+        listFiles: jest.fn(async () => {
+          throw new Error('list boom');
+        }),
+        deleteFile,
+        logger: silentLogger,
+      }),
+    ).toBe(0);
+    expect(deleteFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps sweeping when one deletion throws', async () => {
+    const deleteFile = jest
+      .fn(async () => true)
+      .mockRejectedValueOnce(new Error('delete boom'));
+    const removed = await sweepScratchOrphans({
+      manager: okManager,
+      listFiles: jest.fn(async () => [
+        entry('copilot-page-1748000000000-0.png'),
+        entry('copilot-page-1748000000001-1.png'),
+      ]),
+      deleteFile,
+      logger: silentLogger,
+    });
+    expect(removed).toBe(1);
+    expect(deleteFile).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts only deletions the bridge confirms (false return not counted)', async () => {
+    const deleteFile = jest
+      .fn(async () => true)
+      .mockResolvedValueOnce(false);
+    const removed = await sweepScratchOrphans({
+      manager: okManager,
+      listFiles: jest.fn(async () => [
+        entry('copilot-page-1748000000000-0.png'),
+        entry('copilot-page-1748000000001-1.png'),
+      ]),
+      deleteFile,
+      logger: silentLogger,
+    });
+    expect(removed).toBe(1);
+  });
+
+  it('works without a logger (index.js wires none)', async () => {
+    // The bootstrap call site passes only manager/listFiles/deleteFile,
+    // so the internal no-op logger default has to hold.
+    const deleteFile = jest.fn(async () => true);
+    const removed = await sweepScratchOrphans({
+      manager: okManager,
+      listFiles: jest.fn(async () => [
+        entry('copilot-page-1748000000000-0.png'),
+      ]),
+      deleteFile,
+    });
+    expect(removed).toBe(1);
+
+    // And the no-op logger must absorb the failure paths too, which is
+    // where a missing default would actually throw.
+    await expect(
+      sweepScratchOrphans({
+        manager: okManager,
+        listFiles: jest.fn(async () => [
+          entry('copilot-page-1748000000000-1.png'),
+        ]),
+        deleteFile: jest.fn(async () => {
+          throw new Error('delete boom');
+        }),
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      sweepScratchOrphans({
+        manager: {getPluginDirPath: jest.fn(async () => null)},
+        listFiles: jest.fn(async () => []),
+        deleteFile: jest.fn(async () => true),
+      }),
+    ).resolves.toBe(0);
+  });
+
+  it('refuses to sweep when there is no plugin dir (shared storage is out of scope)', async () => {
+    // Capture falls back to /sdcard/Android/data when the firmware
+    // returns no plugin dir, but the unattended bootstrap sweep must
+    // not: listing/deleting in shared storage needs FILE:READ +
+    // FILE:WRITE, and on Chauvet the SecurityException is thrown from
+    // inside RTNFileModule where no JS try/catch can catch it — the
+    // host kills the plugin.
+    const listFiles = jest.fn(async () => [
+      entry('copilot-page-1748000000000-0.png'),
+    ]);
+    const deleteFile = jest.fn(async () => true);
+    for (const dir of [null, undefined, '']) {
+      const removed = await sweepScratchOrphans({
+        manager: {getPluginDirPath: jest.fn(async () => dir)},
+        listFiles,
+        deleteFile,
+        logger: silentLogger,
+      });
+      expect(removed).toBe(0);
+    }
+    expect(listFiles).not.toHaveBeenCalled();
+    expect(deleteFile).not.toHaveBeenCalled();
+  });
+
+  it('normalises a trailing slash on the plugin dir', async () => {
+    const listFiles = jest.fn(async () => []);
+    await sweepScratchOrphans({
+      manager: {getPluginDirPath: jest.fn(async () => `${scratchDir}/`)},
+      listFiles,
+      deleteFile: jest.fn(async () => true),
+      logger: silentLogger,
+    });
+    expect(listFiles).toHaveBeenCalledWith(scratchDir);
+  });
+
+  it('skips a scratch file a capture is still holding', async () => {
+    // The sweep is fired fire-and-forget at module load while the
+    // button listener is registered moments later, so a tap can be
+    // rendering into a scratch file the sweep then lists. Deleting it
+    // makes the PNG read fail and the send loses its page context
+    // entirely, with only a warn.
+    let releaseRender: () => void = () => {};
+    const blocked = new Promise<void>(res => {
+      releaseRender = res;
+    });
+    const slowFile = {
+      ...okFile,
+      generateNotePng: jest.fn(async () => {
+        await blocked;
+        return {success: true, result: true};
+      }),
+    };
+
+    // Start a capture and let it reach the render call, so its scratch
+    // filename is registered but not yet discarded.
+    const capturing = captureCurrentPage({
+      comm: okComm,
+      file: slowFile,
+      doc: okDoc,
+      manager: okManager,
+      fetchFn: okFetch,
+      deleteFile: jest.fn(async () => true),
+      logger: silentLogger,
+    });
+    // Drain microtasks until capture reaches the render call — it
+    // awaits several bridge round-trips first.
+    for (let i = 0; i < 50 && !slowFile.generateNotePng.mock.calls.length; i++) {
+      await Promise.resolve();
+    }
+    expect(slowFile.generateNotePng).toHaveBeenCalled();
+    const renderCalls = slowFile.generateNotePng.mock
+      .calls as unknown as Array<[{pngPath: string}]>;
+    const inFlightPath = renderCalls[0][0].pngPath;
+    const inFlightName = inFlightPath.slice(inFlightPath.lastIndexOf('/') + 1);
+
+    const deleteFile = jest.fn(async () => true);
+    const removed = await sweepScratchOrphans({
+      manager: okManager,
+      listFiles: jest.fn(async () => [
+        entry(inFlightName),
+        entry('copilot-page-1000000000000-9.png'), // a genuine orphan
+      ]),
+      deleteFile,
+      logger: silentLogger,
+    });
+
+    expect(removed).toBe(1);
+    expect(deleteFile).toHaveBeenCalledTimes(1);
+    expect(deleteFile).toHaveBeenCalledWith(
+      `${scratchDir}/copilot-page-1000000000000-9.png`,
+    );
+    expect(deleteFile).not.toHaveBeenCalledWith(inFlightPath);
+
+    releaseRender();
+    await capturing;
+
+    // Once capture has finished with it, the name is released so a
+    // later sweep can reclaim it if it was ever left behind.
+    const secondDelete = jest.fn(async () => true);
+    await sweepScratchOrphans({
+      manager: okManager,
+      listFiles: jest.fn(async () => [entry(inFlightName)]),
+      deleteFile: secondDelete,
+      logger: silentLogger,
+    });
+    expect(secondDelete).toHaveBeenCalledWith(inFlightPath);
+  });
+
+  it('returns 0 when getPluginDirPath throws (no directory to sweep)', async () => {
+    const deleteFile = jest.fn(async () => true);
+    const removed = await sweepScratchOrphans({
+      manager: {
+        getPluginDirPath: jest.fn(async () => {
+          throw new Error('dir boom');
+        }),
+      },
+      listFiles: jest.fn(async () => []),
+      deleteFile,
+      logger: silentLogger,
+    });
+    expect(removed).toBe(0);
+    expect(deleteFile).not.toHaveBeenCalled();
   });
 });
