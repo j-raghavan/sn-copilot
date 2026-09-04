@@ -31,11 +31,17 @@ export const createDeepSeekClient = (
         '[DEEPSEEK] image attachment dropped (provider is text-only)',
       );
     }
+    // Same transcript layout as OpenAI: system, prior turns, current.
+    const history = (req.history ?? []).map(t => ({
+      role: t.role,
+      content: t.text,
+    }));
     const body = {
       model: opts.model,
       max_tokens: req.maxTokens,
       messages: [
         {role: 'system', content: req.systemPrompt},
+        ...history,
         {role: 'user', content: req.userText},
       ],
     };

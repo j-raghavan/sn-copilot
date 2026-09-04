@@ -564,6 +564,111 @@ class CopilotOverlayModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * Reclaims disk space from old plugin versions. PluginHost keeps
+   * every past version's files (app_<ts>.npk / app_<ts>_libs / oat
+   * artifacts) in the plugin directory on reinstall, so a plugin's
+   * on-device footprint grows by its full size on every update and
+   * nothing ever prunes it. We run inside the PluginHost process, so
+   * we can delete our own stale versions: keep the newest timestamp
+   * (the running one), drop the rest.
+   *
+   * dirPath = PluginManager.getPluginDirPath(). Resolves with
+   * {success, freedBytes, kept} — kept is the timestamp retained, or
+   * "none" when no app_<ts>.npk exists (fresh install layout).
+   *
+   * Cleanup recipe adapted from AgP42's Dashboard plugin janitor.
+   */
+  @ReactMethod
+  fun cleanupOldVersions(dirPath: String, promise: Promise) {
+    try {
+      val dir = java.io.File(dirPath)
+      val files = dir.listFiles()
+      val map = Arguments.createMap()
+      map.putBoolean("success", true)
+      if (files == null) {
+        map.putDouble("freedBytes", 0.0)
+        map.putString("kept", "none")
+        promise.resolve(map)
+        return
+      }
+      var maxTs = -1L
+      for (f in files) {
+        val n = f.name
+        if (n.startsWith("app_") && n.endsWith(".npk")) {
+          val ts = leadingTimestamp(n.substring(4))
+          if (ts > maxTs) maxTs = ts
+        }
+      }
+      if (maxTs < 0) {
+        map.putDouble("freedBytes", 0.0)
+        map.putString("kept", "none")
+        promise.resolve(map)
+        return
+      }
+      val keep = maxTs.toString()
+      var freed = 0L
+      // Older app_<ts>.npk files and app_<ts>_libs directories.
+      for (f in files) {
+        val n = f.name
+        if (n.startsWith("app_") && !n.contains(keep)) {
+          freed += deleteRecursively(f)
+        }
+      }
+      // Compiled artifacts (odex/vdex/art) for older versions.
+      val oat = java.io.File(dir, "oat")
+      if (oat.isDirectory) {
+        freed += cleanOat(oat, keep)
+      }
+      Log.i(TAG, "[COPILOT_OVERLAY] cleanupOldVersions freed=$freed kept=$keep")
+      map.putDouble("freedBytes", freed.toDouble())
+      map.putString("kept", keep)
+      promise.resolve(map)
+    } catch (e: Throwable) {
+      val msg = "${e.javaClass.simpleName}: ${e.message}"
+      Log.e(TAG, "[COPILOT_OVERLAY] cleanupOldVersions: $msg", e)
+      promise.reject("CLEANUP_FAILED", msg, e)
+    }
+  }
+
+  /** Leading run of digits of a string as a Long (-1 when absent). */
+  private fun leadingTimestamp(s: String): Long {
+    var i = 0
+    while (i < s.length && s[i].isDigit()) i++
+    if (i == 0) return -1
+    return try {
+      s.substring(0, i).toLong()
+    } catch (e: NumberFormatException) {
+      -1
+    }
+  }
+
+  /** Deletes a file or directory tree, returning the bytes reclaimed. */
+  private fun deleteRecursively(f: java.io.File): Long {
+    var sum = 0L
+    if (f.isDirectory) {
+      f.listFiles()?.forEach { sum += deleteRecursively(it) }
+    } else {
+      sum += f.length()
+    }
+    f.delete()
+    return sum
+  }
+
+  /** In oat/, drop compiled app_<oldts>.* artifacts not matching keep. */
+  private fun cleanOat(oat: java.io.File, keep: String): Long {
+    var sum = 0L
+    oat.listFiles()?.forEach { k ->
+      if (k.isDirectory) {
+        sum += cleanOat(k, keep)
+      } else if (k.name.startsWith("app_") && !k.name.contains(keep)) {
+        sum += k.length()
+        k.delete()
+      }
+    }
+    return sum
+  }
+
   private fun buildCryptoResult(
       success: Boolean,
       code: String,

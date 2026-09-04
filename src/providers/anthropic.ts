@@ -35,11 +35,13 @@ export const createAnthropicClient = (
     const start = Date.now();
     // Image block (when present) precedes the text — Anthropic's
     // documented best practice and what the Messages API expects.
+    type CacheControl = {type: 'ephemeral'};
     type Block =
       | {type: 'text'; text: string}
       | {
           type: 'image';
           source: {type: 'base64'; media_type: string; data: string};
+          cache_control?: CacheControl;
         };
     const content: Block[] = [];
     if (req.imageBase64) {
@@ -50,14 +52,39 @@ export const createAnthropicClient = (
           media_type: 'image/png',
           data: req.imageBase64,
         },
+        // Cache breakpoint at the END of the stable prefix. Everything
+        // before and including this block — the system prompt and the
+        // page screenshot — is byte-identical for every send against
+        // the same capture (pageContext holds one base64 string per
+        // sidebar tap), so repeat sends bill it at ~10% instead of
+        // full price. The volatile user text follows and stays outside
+        // the cached region, which is the whole point: a top-level
+        // marker would auto-place AFTER that text and cache a prefix
+        // nothing ever matches, paying the 1.25x write premium on
+        // every request for zero reads.
+        //
+        // Only set when an image is present. Without one the stable
+        // prefix is the system prompt alone (~400 tokens), below every
+        // model's minimum cacheable size, so a marker there would be a
+        // silent no-op — and text-only paths (Test Connection, the
+        // Grill judge/rephrase calls) keep their exact previous wire
+        // shape.
+        cache_control: {type: 'ephemeral'},
       });
     }
     content.push({type: 'text', text: req.userText});
+    // Prior turns first (normalised upstream: starts with 'user',
+    // alternating, non-empty — the shape this API enforces), then the
+    // current user message.
+    const history = (req.history ?? []).map(t => ({
+      role: t.role,
+      content: t.text,
+    }));
     const body = {
       model: opts.model,
       max_tokens: req.maxTokens,
       system: req.systemPrompt,
-      messages: [{role: 'user', content}],
+      messages: [...history, {role: 'user', content}],
     };
     const res = await fetchFn(ENDPOINT, {
       method: 'POST',
@@ -74,7 +101,12 @@ export const createAnthropicClient = (
     }
     const data = (await res.json()) as {
       content?: unknown;
-      usage?: {input_tokens?: number; output_tokens?: number};
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_read_input_tokens?: number;
+        cache_creation_input_tokens?: number;
+      };
       model?: string;
     };
     return {
@@ -82,6 +114,10 @@ export const createAnthropicClient = (
       usage: {
         inputTokens: Number(data.usage?.input_tokens ?? 0),
         outputTokens: Number(data.usage?.output_tokens ?? 0),
+        cacheReadInputTokens: Number(data.usage?.cache_read_input_tokens ?? 0),
+        cacheCreationInputTokens: Number(
+          data.usage?.cache_creation_input_tokens ?? 0,
+        ),
       },
       latencyMs: Date.now() - start,
       modelId: typeof data.model === 'string' ? data.model : opts.model,

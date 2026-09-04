@@ -31,9 +31,15 @@ export const createGeminiClient = (
       });
     }
     parts.push({text: req.userText});
+    // Gemini names the assistant role 'model'; otherwise the history
+    // maps 1:1 as one content entry per prior turn.
+    const history = (req.history ?? []).map(t => ({
+      role: t.role === 'assistant' ? 'model' : 'user',
+      parts: [{text: t.text}],
+    }));
     const body = {
       systemInstruction: {parts: [{text: req.systemPrompt}]},
-      contents: [{role: 'user', parts}],
+      contents: [...history, {role: 'user', parts}],
       generationConfig: {maxOutputTokens: req.maxTokens},
     };
     const url = `${BASE}/${encodeURIComponent(opts.model)}:generateContent?key=${encodeURIComponent(opts.apiKey)}`;
