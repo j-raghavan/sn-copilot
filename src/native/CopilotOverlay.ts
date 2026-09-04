@@ -48,6 +48,16 @@ export type ScreenSize = {
   message: string;
 };
 
+// Result of the old-version cleanup sweep. `kept` is the retained
+// version timestamp, or 'none' when the directory has no
+// app_<ts>.npk (fresh install layout).
+export type CleanupResult = {
+  success: boolean;
+  freedBytes: number;
+  kept: string;
+  message?: string;
+};
+
 type NativeShape = {
   open(width: number, height: number, x: number, y: number): Promise<OverlayResult>;
   move(x: number, y: number): Promise<OverlayResult>;
@@ -63,6 +73,7 @@ type NativeShape = {
     keyLengthBytes: number,
   ): Promise<CryptoResult>;
   cryptoRandomBytes(length: number): Promise<CryptoResult>;
+  cleanupOldVersions(dirPath: string): Promise<CleanupResult>;
 };
 
 const moduleMissingResult: OverlayResult = {
@@ -187,6 +198,21 @@ export async function cryptoRandomBytes(length: number): Promise<CryptoResult> {
   return native.cryptoRandomBytes(length);
 }
 
+export async function cleanupOldVersions(
+  dirPath: string,
+): Promise<CleanupResult> {
+  const native = nativeOrNull();
+  if (!native || typeof native.cleanupOldVersions !== 'function') {
+    return {
+      success: false,
+      freedBytes: 0,
+      kept: 'none',
+      message: moduleMissingResult.message,
+    };
+  }
+  return native.cleanupOldVersions(dirPath);
+}
+
 // Convenience for tests / future callers that prefer a single object.
 const CopilotOverlay = {
   open,
@@ -198,5 +224,6 @@ const CopilotOverlay = {
   writeFileBase64,
   cryptoPbkdf2Sha256,
   cryptoRandomBytes,
+  cleanupOldVersions,
 };
 export default CopilotOverlay;

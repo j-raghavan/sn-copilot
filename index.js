@@ -85,6 +85,29 @@ AppRegistry.registerComponent('SnCopilotPanel', () => CopilotPanel);
 PluginManager.init();
 installPluginRouter();
 
+// Reclaim disk from old plugin versions. PluginHost keeps every past
+// version's files (app_<ts>.npk / _libs / oat artifacts) on reinstall
+// — the plugin's on-device footprint otherwise grows by its full size
+// with every update, forever. We run inside the PluginHost process,
+// so we can prune our own stale versions. Fire-and-forget: a cleanup
+// failure must never block bootstrap.
+(async () => {
+  try {
+    const dir = await PluginManager.getPluginDirPath();
+    if (dir) {
+      const r = await CopilotOverlay.cleanupOldVersions(dir);
+      if (r.success && r.freedBytes > 0) {
+        infoLog(
+          `[COPILOT] janitor freed ${Math.round(r.freedBytes / 1024)} KiB ` +
+            `(kept version ${r.kept})`,
+        );
+      }
+    }
+  } catch (e) {
+    console.log('[COPILOT] janitor failed:', String(e));
+  }
+})();
+
 // Secure-key-store lifecycle wiring: subscribes to PluginLifeListener
 // so onStop wipes the in-memory derived key, and to sessionKey events
 // so unlock/lock arms/cancels the idle timer. Fire-and-forget — the
