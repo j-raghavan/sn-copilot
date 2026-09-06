@@ -68,6 +68,11 @@ export type SettingsViewProps = {
 // Test Connection sends a trivial prompt, but a reasoning model still
 // thinks before answering it — 30s was short enough to abort a model
 // that works, making it look broken during setup.
+import {
+  ProviderStopError,
+  sanitizeProviderError,
+} from './sanitizeProviderError';
+
 const TEST_CONNECTION_TIMEOUT_MS = 120_000;
 
 // Same shared-budget constraint as chat: 64 tokens was spent entirely
@@ -235,6 +240,14 @@ function SettingsViewBody(props: {
       if (!mountedRef.current) {
         return;
       }
+      // A 200 is not success. If generation stopped without producing
+      // text — the budget spent reasoning, or the provider declining —
+      // reporting OK here would hide the very failure this screen
+      // exists to detect, and the user would go on to a chat that
+      // silently returns nothing.
+      if (r.stopReason !== 'complete' || r.text.trim().length === 0) {
+        throw new ProviderStopError(r.stopReason);
+      }
       setTestStatus({
         kind: 'ok',
         latencyMs: r.latencyMs,
@@ -244,7 +257,10 @@ function SettingsViewBody(props: {
       if (!mountedRef.current) {
         return;
       }
-      const msg = (e as Error).message;
+      // Same sanitiser the chat bubble uses, so the two surfaces
+      // cannot describe the same failure differently — and so the
+      // upstream body text never reaches the screen.
+      const msg = sanitizeProviderError(e);
       setTestStatus({kind: 'error', message: msg});
       console.log(
         `[COPILOT_SETTINGS] test connection failed elapsedMs=${Date.now() - start} err=${msg}`,

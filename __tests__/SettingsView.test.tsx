@@ -286,6 +286,10 @@ describe('SettingsView — discovery: one valid key file', () => {
           json: async () => ({
             content: [{type: 'text', text: 'Hi! Connection works.'}],
             usage: {input_tokens: 5, output_tokens: 6},
+            // The real API always sends this; without it the response
+            // maps to 'unknown' and Test Connection correctly refuses
+            // to call it a success.
+            stop_reason: 'end_turn',
             model: 'claude-haiku-4-5-20251001',
           }),
         };
@@ -307,6 +311,54 @@ describe('SettingsView — discovery: one valid key file', () => {
     expect(text).toContain('claude-haiku-4-5-20251001');
     // The actual reply text should NOT be shown.
     expect(text).not.toContain('Hi! Connection works.');
+  });
+
+  it.each([
+    [
+      'a truncated empty reply',
+      {content: [], usage: {input_tokens: 5, output_tokens: 2000}, stop_reason: 'max_tokens'},
+      /cut off/i,
+    ],
+    [
+      'a refusal',
+      {
+        content: [{type: 'text', text: 'I cannot help'}],
+        usage: {input_tokens: 5, output_tokens: 6},
+        stop_reason: 'refusal',
+      },
+      /declined/i,
+    ],
+    [
+      'an empty reply that claims to be complete',
+      {content: [], usage: {input_tokens: 5, output_tokens: 0}, stop_reason: 'end_turn'},
+      /empty reply/i,
+    ],
+  ])('Test Connection fails for %s', async (_label, body, pattern) => {
+    // A 200 is not success. Reporting OK here would hide the exact
+    // failure this screen exists to detect.
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith('file://')) {
+        return fileResp(
+          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-test123\n',
+        );
+      }
+      if (url.includes('api.anthropic.com')) {
+        return {ok: true, json: async () => body};
+      }
+      return {ok: false, status: 500, text: async () => 'unexpected'};
+    });
+    const {tree} = renderSettings();
+    await act(async () => {
+      await flushPromises();
+    });
+    await act(async () => {
+      findByTestID(tree, 'settings-test-connection').props.onPress();
+      await flushPromises();
+    });
+    const text = findAllText(tree).join(' | ');
+    expect(text).toContain('Connection failed:');
+    expect(text).toMatch(pattern);
+    expect(text).not.toContain('Connection OK!');
   });
 
   it('Test Connection error renders "Connection failed: <msg>"', async () => {
