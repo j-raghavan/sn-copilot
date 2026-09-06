@@ -124,6 +124,35 @@ describe('regenerateCard', () => {
     expect(captured?.imageBase64).toBeUndefined();
   });
 
+  // A reply the model was cut off mid-JSON must report budget
+  // exhaustion, not "did not return valid JSON" — that blamed the model
+  // for a ceiling we set.
+  const stopProvider = (stopReason: 'truncated' | 'refused'): ProviderClient => ({
+    id: 'fake',
+    async send() {
+      return {
+        text: '[{"partial":',
+        stopReason,
+        usage: {inputTokens: 1, outputTokens: 1},
+        latencyMs: 1,
+        modelId: 'm',
+      };
+    },
+  });
+
+  it('reports a truncated reply as a provider error, not a parse error', async () => {
+    await expect(
+      regenerateCard({
+        client: stopProvider('truncated'),
+        apiKey: 'sk',
+        model: 'm',
+        pageContext: PAGE,
+        originalCard: original,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({kind: 'provider'});
+  });
+
   it('wraps provider rejection as DeckGenerationError(provider)', async () => {
     await expect(
       regenerateCard({

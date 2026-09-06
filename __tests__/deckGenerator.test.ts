@@ -223,6 +223,75 @@ describe('generateDeck — error paths', () => {
     ).rejects.toBeInstanceOf(DeckGenerationError);
   });
 
+  it.each([
+    ['truncated', /cut off/i],
+    ['refused', /declined/i],
+    ['context_overflow', /new chat/i],
+  ] as const)(
+    'reports %s as a provider error, not "did not return valid JSON"',
+    async (stopReason, pattern) => {
+      // The whole point of carrying a stop reason: a budget spent on
+      // reasoning used to reach the JSON parser and surface as
+      // "Model did not return valid JSON", blaming the model for a
+      // limit we set. Deck generation is the likeliest thing to
+      // truncate — five cards plus reasoning against a 4000 ceiling.
+      const provider: ProviderClient = {
+        id: 'fake',
+        async send() {
+          return {
+            text: '[{"partial":',
+            stopReason,
+            usage: {inputTokens: 1, outputTokens: 1},
+            latencyMs: 1,
+            modelId: 'm',
+          };
+        },
+      };
+      await expect(
+        generateDeck({
+          client: provider,
+          apiKey: 'k',
+          model: 'm',
+          pageContext: PAGE,
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toMatchObject({kind: 'provider'});
+      await expect(
+        generateDeck({
+          client: provider,
+          apiKey: 'k',
+          model: 'm',
+          pageContext: PAGE,
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow(pattern);
+    },
+  );
+
+  it('rejects an empty reply before it reaches the JSON parser', async () => {
+    const provider: ProviderClient = {
+      id: 'fake',
+      async send() {
+        return {
+          text: '',
+          stopReason: 'complete' as const,
+          usage: {inputTokens: 1, outputTokens: 1},
+          latencyMs: 1,
+          modelId: 'm',
+        };
+      },
+    };
+    await expect(
+      generateDeck({
+        client: provider,
+        apiKey: 'k',
+        model: 'm',
+        pageContext: PAGE,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({kind: 'provider'});
+  });
+
   it('throws DeckGenerationError(parse) on malformed JSON', async () => {
     await expect(
       generateDeck({

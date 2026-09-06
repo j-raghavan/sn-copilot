@@ -68,11 +68,14 @@ import GrillCard from './GrillCard';
 // the slowest call (~6-15s on a non-reasoning provider, longer on a
 // reasoning one, which spends tokens thinking before emitting).
 const GENERATE_TIMEOUT_MS = 120_000;
-const JUDGE_TIMEOUT_MS = 90_000;
+// Raised with their budgets (1000→3000 and 1200→3000). Leaving these
+// at 90s while tripling the token ceiling is the slow-success-becomes-
+// an-abort regression the chat timeout change exists to prevent.
+const JUDGE_TIMEOUT_MS = 120_000;
 // Raised with its output budget — regenerate is no longer the cheapest
 // call once the model reasons first.
 const REGENERATE_TIMEOUT_MS = 90_000;
-const REPHRASE_TIMEOUT_MS = 90_000;
+const REPHRASE_TIMEOUT_MS = 120_000;
 
 type Phase = 'generating' | 'grilling' | 'done' | 'error';
 
@@ -752,7 +755,11 @@ const judgeAndRegenerateInBackground = async (
   if (judgeResult.regenerateIds.length === 0) {
     return;
   }
-  for (const cardId of judgeResult.regenerateIds) {
+  // Deduped: the judge's reply is provider-controlled and repeating one
+  // id N times would fire N sequential regenerations, each now costing
+  // 2000 output tokens rather than 500. The loop aborts only on unmount
+  // or a new generation, so a repeated id is an unbounded bill.
+  for (const cardId of [...new Set(judgeResult.regenerateIds)]) {
     // The post-regen isAlive check below catches mid-loop abort —
     // saving one wasted LLM call in the rare between-iteration race
     // isn't worth the test complexity of forcing the branch.

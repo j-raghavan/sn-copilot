@@ -68,16 +68,17 @@ export type SettingsViewProps = {
 // Test Connection sends a trivial prompt, but a reasoning model still
 // thinks before answering it — 30s was short enough to abort a model
 // that works, making it look broken during setup.
-import {
-  ProviderStopError,
-  sanitizeProviderError,
-} from './sanitizeProviderError';
+import {sanitizeProviderError} from './sanitizeProviderError';
+import {assertUsable} from '../providers/stopReason';
 
 const TEST_CONNECTION_TIMEOUT_MS = 120_000;
 
 // Same shared-budget constraint as chat: 64 tokens was spent entirely
 // on reasoning, so a working model returned nothing and failed setup.
 // Smaller than the chat budget because the expected reply is one line.
+// Stays under 4096 like the others — older models cap output there and
+// Anthropic rejects a max_tokens above a model's maximum. Provisional:
+// tune from the reasoningTokens figure logged on each send.
 const TEST_CONNECTION_MAX_TOKENS = 2000;
 
 const PROVIDER_LABEL: Record<ProviderId, string> = {
@@ -245,9 +246,10 @@ function SettingsViewBody(props: {
       // reporting OK here would hide the very failure this screen
       // exists to detect, and the user would go on to a chat that
       // silently returns nothing.
-      if (r.stopReason !== 'complete' || r.text.trim().length === 0) {
-        throw new ProviderStopError(r.stopReason);
-      }
+      // A diagnostic that reports "working" while the output budget is
+      // misconfigured is worse than useless, so a truncated reply fails
+      // here even when it carries text.
+      assertUsable(r, {acceptPartial: false});
       setTestStatus({
         kind: 'ok',
         latencyMs: r.latencyMs,
@@ -262,8 +264,12 @@ function SettingsViewBody(props: {
       // upstream body text never reaches the screen.
       const msg = sanitizeProviderError(e);
       setTestStatus({kind: 'error', message: msg});
+      // Raw error stays in the log — this is the one screen whose job
+      // is diagnosing setup, and the upstream body explains *why* a key
+      // was rejected. Only the display is sanitised.
       console.log(
-        `[COPILOT_SETTINGS] test connection failed elapsedMs=${Date.now() - start} err=${msg}`,
+        `[COPILOT_SETTINGS] test connection failed elapsedMs=${Date.now() - start} ` +
+          `err=${msg} raw=${String(e)}`,
       );
     } finally {
       clearTimeout(timeout);

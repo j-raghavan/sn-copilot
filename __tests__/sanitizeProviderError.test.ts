@@ -1,7 +1,5 @@
-import {
-  ProviderStopError,
-  sanitizeProviderError,
-} from '../src/ui/sanitizeProviderError';
+import {sanitizeProviderError} from '../src/ui/sanitizeProviderError';
+import {ProviderStopError} from '../src/providers/stopReason';
 
 describe('sanitizeProviderError', () => {
   it('maps an "aborted" error to a timeout-friendly message', () => {

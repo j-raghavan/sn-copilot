@@ -9,7 +9,7 @@
  * `usage.output_tokens`.
  */
 
-import {throwHttpError} from './_http';
+import {finiteOr, throwHttpError} from './_http';
 import type {
   ProviderClient,
   ProviderRequest,
@@ -139,14 +139,12 @@ export const createAnthropicClient = (
       text: extractText(data),
       stopReason: mapStopReason(data.stop_reason),
       usage: {
-        inputTokens: Number(data.usage?.input_tokens ?? 0),
-        outputTokens: Number(data.usage?.output_tokens ?? 0),
+        inputTokens: finiteOr(data.usage?.input_tokens, 0),
+        outputTokens: finiteOr(data.usage?.output_tokens, 0),
         // No reasoningTokens: Anthropic folds thinking into
         // output_tokens and exposes no separate figure.
-        cacheReadInputTokens: Number(data.usage?.cache_read_input_tokens ?? 0),
-        cacheCreationInputTokens: Number(
-          data.usage?.cache_creation_input_tokens ?? 0,
-        ),
+        cacheReadInputTokens: finiteOr(data.usage?.cache_read_input_tokens, 0),
+        cacheCreationInputTokens: finiteOr(data.usage?.cache_creation_input_tokens, 0),
       },
       latencyMs: Date.now() - start,
       modelId: typeof data.model === 'string' ? data.model : opts.model,

@@ -5,7 +5,8 @@
  * Auth:     ?key=<key> query parameter
  */
 
-import {finiteOrUndefined, throwHttpError} from './_http';
+import {finiteOr,
+  finiteOrUndefined, throwHttpError} from './_http';
 import type {
   ProviderClient,
   ProviderRequest,
@@ -26,6 +27,10 @@ const mapFinishReason = (raw: unknown): StopReason => {
       return 'truncated';
     case 'SAFETY':
     case 'RECITATION':
+    case 'PROHIBITED_CONTENT':
+    case 'BLOCKLIST':
+    case 'SPII':
+    case 'IMAGE_SAFETY':
       return 'refused';
     default:
       return 'unknown';
@@ -79,6 +84,9 @@ export const createGeminiClient = (
         content?: {parts?: Array<{text?: string}>};
         finishReason?: string;
       }>;
+      // A prompt blocked before generation returns no candidates at
+      // all — the reason lives here instead.
+      promptFeedback?: {blockReason?: string};
       usageMetadata?: {
         promptTokenCount?: number;
         candidatesTokenCount?: number;
@@ -90,15 +98,21 @@ export const createGeminiClient = (
     const text = respParts.map(p => p.text ?? '').join('');
     return {
       text,
-      stopReason: mapFinishReason(data.candidates?.[0]?.finishReason),
+      // A prompt-level block has no candidate to carry a finishReason,
+      // so it would otherwise read as 'unknown' and tell the user to
+      // retry something that will be blocked again.
+      stopReason:
+        data.promptFeedback?.blockReason !== undefined
+          ? 'refused'
+          : mapFinishReason(data.candidates?.[0]?.finishReason),
       usage: {
         // "Number of tokens of thoughts for thinking models" — billed
         // as output and drawn from the same maxOutputTokens budget.
         reasoningTokens: finiteOrUndefined(
           data.usageMetadata?.thoughtsTokenCount,
         ),
-        inputTokens: Number(data.usageMetadata?.promptTokenCount ?? 0),
-        outputTokens: Number(data.usageMetadata?.candidatesTokenCount ?? 0),
+        inputTokens: finiteOr(data.usageMetadata?.promptTokenCount, 0),
+        outputTokens: finiteOr(data.usageMetadata?.candidatesTokenCount, 0),
       },
       latencyMs: Date.now() - start,
       modelId: typeof data.modelVersion === 'string' ? data.modelVersion : opts.model,

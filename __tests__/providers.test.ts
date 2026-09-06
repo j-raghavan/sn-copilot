@@ -811,6 +811,113 @@ describe('reasoning-token accounting', () => {
   });
 });
 
+describe('boundary hardening — hostile provider JSON', () => {
+  const okRes = (body: unknown) =>
+    ({ok: true, status: 200, json: async () => body}) as unknown as Response;
+
+  it.each([
+    ['openai', createOpenAIClient],
+    ['deepseek', createDeepSeekClient],
+  ] as const)('%s coerces a non-string content rather than trusting it', async (_n, make) => {
+    // A non-string here previously made the caller's text.trim() throw
+    // with "text.trim is not a function".
+    const fetchFn = jest.fn().mockResolvedValue(
+      okRes({
+        choices: [{message: {content: {evil: 1}}, finish_reason: 'stop'}],
+        usage: {prompt_tokens: 1, completion_tokens: 1},
+      }),
+    );
+    const r = await make(fetchFn as unknown as typeof fetch).send(baseReq(), {
+      apiKey: 'k',
+      model: 'm',
+    });
+    expect(typeof r.text).toBe('string');
+    expect(() => r.text.trim()).not.toThrow();
+  });
+
+  it.each([
+    ['openai', createOpenAIClient, {usage: {prompt_tokens: 'lots', completion_tokens: null}}],
+    ['anthropic', createAnthropicClient, {usage: {input_tokens: 'lots', output_tokens: NaN}}],
+  ] as const)('%s never yields NaN in usage counts', async (_n, make, body) => {
+    const fetchFn = jest.fn().mockResolvedValue(
+      okRes({
+        ...body,
+        choices: [{message: {content: 'hi'}, finish_reason: 'stop'}],
+        content: [{type: 'text', text: 'hi'}],
+        stop_reason: 'end_turn',
+      }),
+    );
+    const r = await make(fetchFn as unknown as typeof fetch).send(baseReq(), {
+      apiKey: 'k',
+      model: 'm',
+    });
+    expect(Number.isNaN(r.usage.inputTokens)).toBe(false);
+    expect(Number.isNaN(r.usage.outputTokens)).toBe(false);
+  });
+
+  it.each(['PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'IMAGE_SAFETY'] as const)(
+    'gemini maps %s to refused, not a retry-me empty reply',
+    async finishReason => {
+      const fetchFn = jest
+        .fn()
+        .mockResolvedValue(okRes({candidates: [{finishReason}]}));
+      const r = await createGeminiClient(
+        fetchFn as unknown as typeof fetch,
+      ).send(baseReq(), {apiKey: 'k', model: 'm'});
+      expect(r.stopReason).toBe('refused');
+    },
+  );
+
+  it('gemini maps a prompt-level block, which carries no candidates', async () => {
+    const fetchFn = jest
+      .fn()
+      .mockResolvedValue(okRes({promptFeedback: {blockReason: 'SAFETY'}}));
+    const r = await createGeminiClient(fetchFn as unknown as typeof fetch).send(
+      baseReq(),
+      {apiKey: 'k', model: 'm'},
+    );
+    expect(r.stopReason).toBe('refused');
+  });
+});
+
+describe('INV1 — no sampling parameters on any provider', () => {
+  const okRes = (body: unknown) =>
+    ({ok: true, status: 200, json: async () => body}) as unknown as Response;
+
+  it.each([
+    ['anthropic', createAnthropicClient],
+    ['openai', createOpenAIClient],
+    ['gemini', createGeminiClient],
+    ['deepseek', createDeepSeekClient],
+  ] as const)('%s sends no temperature/top_p/top_k/penalties', async (_n, make) => {
+    // Every current flagship model rejects non-default sampling, so
+    // adding a temperature control would break them all at once.
+    const fetchFn = jest.fn().mockResolvedValue(
+      okRes({
+        content: [{type: 'text', text: 'hi'}],
+        choices: [{message: {content: 'hi'}, finish_reason: 'stop'}],
+        candidates: [{content: {parts: [{text: 'hi'}]}, finishReason: 'STOP'}],
+        usage: {input_tokens: 1, output_tokens: 1, prompt_tokens: 1, completion_tokens: 1},
+        stop_reason: 'end_turn',
+      }),
+    );
+    await make(fetchFn as unknown as typeof fetch).send(baseReq(), {
+      apiKey: 'k',
+      model: 'm',
+    });
+    const raw = fetchFn.mock.calls[0][1].body as string;
+    for (const banned of [
+      'temperature',
+      'top_p',
+      'top_k',
+      'frequency_penalty',
+      'presence_penalty',
+    ]) {
+      expect(raw).not.toContain(banned);
+    }
+  });
+});
+
 describe('createProviderClient — registry', () => {
   const fetchFn = jest.fn();
 

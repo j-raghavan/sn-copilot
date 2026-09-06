@@ -63,10 +63,8 @@ import {buildProviderHistory} from './providerHistory';
 import {shouldAttachPageContext, type SendSource} from './contextRouting';
 import {buildMarkdownStyles} from './markdownStyles';
 import {markdownToPlainText} from './markdownToPlain';
-import {
-  ProviderStopError,
-  sanitizeProviderError,
-} from './sanitizeProviderError';
+import {sanitizeProviderError} from './sanitizeProviderError';
+import {assertUsable} from '../providers/stopReason';
 import SetupChecklist from './SetupChecklist';
 import {SYSTEM_PROMPT} from './systemPrompt';
 import {useProviderClient} from './useProviderClient';
@@ -159,6 +157,10 @@ type ChatMessage =
       // Rendered like any assistant bubble, but never replayed as
       // conversation history — see buildProviderHistory.
       isError?: boolean;
+      // Generation hit the output budget. Render-only: the notice is
+      // added by the bubble, never concatenated into `text`, so it is
+      // not replayed to the provider and not persisted into the text.
+      truncated?: boolean;
     }
   | {id: string; role: 'thinking'};
 
@@ -516,22 +518,21 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       // into the catch below, which already persists the user's turn,
       // clears the thinking placeholder, and marks the bubble isError
       // so it is never replayed to the model as something it said.
-      const isEmpty = r.text.trim().length === 0;
-      if (r.stopReason === 'refused' || r.stopReason === 'context_overflow') {
-        throw new ProviderStopError(r.stopReason);
-      }
-      if (isEmpty) {
-        throw new ProviderStopError(r.stopReason);
-      }
+      // Chat accepts a partial reply — the user paid for those tokens.
+      // Everything else (refused, context overflow, empty) throws into
+      // the catch below, which already persists the user's turn, clears
+      // the thinking placeholder, and marks the bubble isError so it is
+      // never replayed to the model as something it said.
+      assertUsable(r, {acceptPartial: true});
       const assistantMsg: ChatMessage = {
         id: newId(),
         role: 'assistant',
-        // A truncated reply that still has text is worth keeping — the
-        // user paid for it — but it must not read as a finished answer.
-        text:
-          r.stopReason === 'truncated'
-            ? `${r.text}\n\n_[reply was cut off]_`
-            : r.text,
+        text: r.text,
+        // Render-time flag, NOT baked into text: the marker must not
+        // travel back to the provider as words the model wrote, and it
+        // is persisted with the message, so a reloaded conversation
+        // would replay it forever.
+        truncated: r.stopReason === 'truncated' ? true : undefined,
         modelId: r.modelId,
         latencyMs: r.latencyMs,
       };
@@ -1094,6 +1095,11 @@ function ChatBubble({
       <Text style={styles.aiAvatar}>{'✦'}</Text>
       <View style={styles.aiBubble}>
         <Markdown style={mdStyles}>{msg.text}</Markdown>
+        {msg.truncated === true ? (
+          <Text testID={`chat-truncated-${msg.id}`} style={styles.truncatedNote}>
+            {'Reply was cut off — the model hit its output limit.'}
+          </Text>
+        ) : null}
         <View style={styles.bubbleFooter}>
           <TouchableOpacity
             testID={`chat-copy-${msg.id}`}
@@ -1290,6 +1296,12 @@ const styles = StyleSheet.create({
     color: '#000000',
     marginTop: 6,
     fontStyle: 'italic',
+  },
+  truncatedNote: {
+    color: '#000000',
+    marginTop: 6,
+    fontStyle: 'italic',
+    fontSize: 13,
   },
   bubbleFooter: {
     flexDirection: 'row',

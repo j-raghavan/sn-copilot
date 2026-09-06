@@ -891,9 +891,16 @@ describe('ChatView — hung send timeout', () => {
       // Advance past the send timeout → controller aborts → the
       // mocked send rejects → finally block releases the guard.
       await act(async () => {
-        // SEND_TIMEOUT_MS — raised to 120s alongside the output budget,
-        // since a reasoning model thinks before it emits anything.
-        jest.advanceTimersByTime(120_000);
+        // Split deliberately: advancing straight to 120_000 also passes
+        // against the old 60s value, so it would go green on the code
+        // this change replaced. Proving nothing fires at 119_999 is what
+        // pins the constant.
+        jest.advanceTimersByTime(119_999);
+        for (let i = 0; i < 4; i++) {
+          await Promise.resolve();
+        }
+        expect(guard.isInFlight()).toBe(true);
+        jest.advanceTimersByTime(1);
         for (let i = 0; i < 8; i++) {
           await Promise.resolve();
         }

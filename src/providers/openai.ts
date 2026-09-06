@@ -15,6 +15,7 @@
  */
 
 import {
+  finiteOr,
   finiteOrUndefined,
   mapChatCompletionsStopReason,
   throwHttpError,
@@ -101,7 +102,11 @@ export const createOpenAIClient = (
       };
       model?: string;
     };
-    const text = data.choices?.[0]?.message?.content ?? '';
+    // Coerced, not trusted: a non-string `content` would make the
+    // caller's text.trim() throw. anthropic.ts guards its blocks the
+    // same way.
+    const rawContent = data.choices?.[0]?.message?.content;
+    const text = typeof rawContent === 'string' ? rawContent : '';
     return {
       text,
       stopReason: mapChatCompletionsStopReason(
@@ -114,8 +119,8 @@ export const createOpenAIClient = (
         reasoningTokens: finiteOrUndefined(
           data.usage?.completion_tokens_details?.reasoning_tokens,
         ),
-        inputTokens: Number(data.usage?.prompt_tokens ?? 0),
-        outputTokens: Number(data.usage?.completion_tokens ?? 0),
+        inputTokens: finiteOr(data.usage?.prompt_tokens, 0),
+        outputTokens: finiteOr(data.usage?.completion_tokens, 0),
       },
       latencyMs: Date.now() - start,
       modelId: typeof data.model === 'string' ? data.model : opts.model,
