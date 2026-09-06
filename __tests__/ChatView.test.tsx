@@ -429,6 +429,28 @@ describe('ChatView — provider rejection', () => {
     },
   );
 
+  it('sends the raised output budget, under the 4096 model floor', async () => {
+    const fp = require('../src/providers/fakeProvider').default;
+    const spy = jest.spyOn(fp, 'send');
+    try {
+      const {tree} = render();
+      act(() => {
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
+      });
+      await flushFakeProvider();
+      const req = spy.mock.calls[0][0] as {maxTokens: number};
+      // The budget is shared with reasoning tokens, so 256 was spent
+      // thinking and returned nothing on any current flagship model.
+      expect(req.maxTokens).toBe(4000);
+      // Older models cap output at 4096 and Anthropic rejects a
+      // max_tokens above a model's maximum — going higher would break
+      // configurations that work today.
+      expect(req.maxTokens).toBeLessThan(4096);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('keeps a truncated reply that has text, marked as cut off', async () => {
     const fp = require('../src/providers/fakeProvider').default;
     const spy = jest.spyOn(fp, 'send').mockResolvedValueOnce({

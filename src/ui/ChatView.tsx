@@ -81,6 +81,18 @@ import {useProviderClient} from './useProviderClient';
 // turned a slow success into an abort. Matches Grill's heaviest call.
 const SEND_TIMEOUT_MS = 120_000;
 
+// Output budget for a chat send. This is a ceiling shared between the
+// model's reasoning tokens and its visible reply — every current
+// flagship model reasons first, so a small value is spent thinking and
+// returns nothing. 256 was also below the ~250-word target the system
+// prompt asks for (~325 tokens), so it truncated ordinary replies too.
+//
+// Deliberately under 4096: older models cap output there and Anthropic
+// rejects a max_tokens above a model's maximum, so a larger value would
+// break configurations that work today. Provisional — the reasoningTokens
+// figure logged on each send is what this should be tuned from.
+const CHAT_MAX_TOKENS = 4000;
+
 // Three-step font scaling. Scale factors keep e-ink rendering
 // readable across 7.8" and 10.3" devices without per-device tables.
 const FONT_SIZES = ['S', 'M', 'L'] as const;
@@ -484,7 +496,7 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
           userText,
           imageBase64,
           history: wireTurns,
-          maxTokens: 256,
+          maxTokens: CHAT_MAX_TOKENS,
           signal: ctl.signal,
         },
         {apiKey, model},

@@ -232,6 +232,45 @@ describe('SettingsView — discovery: one valid key file', () => {
     expect(text).toContain('Anthropic (Claude)');
   });
 
+  it('Test Connection sends the raised output budget', async () => {
+    // 64 tokens was spent entirely on reasoning by any current model,
+    // so a working provider returned nothing and setup reported failure.
+    let sentBody: Record<string, unknown> | null = null;
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('file://')) {
+        return fileResp(
+          'provider=anthropic\nmodel=claude-haiku-4-5\nkey=sk-ant-test123\n',
+        );
+      }
+      if (url.includes('api.anthropic.com')) {
+        sentBody = JSON.parse(init?.body as string);
+        return {
+          ok: true,
+          json: async () => ({
+            content: [{type: 'text', text: 'Hi!'}],
+            usage: {input_tokens: 5, output_tokens: 6},
+            stop_reason: 'end_turn',
+            model: 'claude-haiku-4-5',
+          }),
+        };
+      }
+      return {ok: false, status: 500, text: async () => 'unexpected'};
+    });
+    const {tree} = renderSettings();
+    await act(async () => {
+      await flushPromises();
+    });
+    await act(async () => {
+      findByTestID(tree, 'settings-test-connection').props.onPress();
+      await flushPromises();
+    });
+    expect(sentBody).not.toBeNull();
+    expect(sentBody!.max_tokens).toBe(2000);
+    // Must stay under 4096: older models cap output there and Anthropic
+    // rejects a max_tokens above a model's maximum.
+    expect(sentBody!.max_tokens as number).toBeLessThan(4096);
+  });
+
   it('Test Connection success → renders "Connection OK!" + model + latency', async () => {
     let anthropicCall = 0;
     mockFetch.mockImplementation(async (url: string) => {

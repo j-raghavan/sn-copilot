@@ -70,6 +70,11 @@ export type SettingsViewProps = {
 // that works, making it look broken during setup.
 const TEST_CONNECTION_TIMEOUT_MS = 120_000;
 
+// Same shared-budget constraint as chat: 64 tokens was spent entirely
+// on reasoning, so a working model returned nothing and failed setup.
+// Smaller than the chat budget because the expected reply is one line.
+const TEST_CONNECTION_MAX_TOKENS = 2000;
+
 const PROVIDER_LABEL: Record<ProviderId, string> = {
   anthropic: 'Anthropic (Claude)',
   openai: 'OpenAI',
@@ -222,7 +227,7 @@ function SettingsViewBody(props: {
           systemPrompt:
             'You are a helpful assistant. Respond briefly to confirm the connection works.',
           userText: 'Hello',
-          maxTokens: 64,
+          maxTokens: TEST_CONNECTION_MAX_TOKENS,
           signal: ctl.signal,
         },
         {apiKey: active.key, model: active.model},

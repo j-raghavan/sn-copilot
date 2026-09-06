@@ -8,6 +8,9 @@ import {
   DECK_SIZE,
   DeckGenerationError,
   GENERATE_MAX_TOKENS,
+  JUDGE_MAX_TOKENS,
+  REPHRASE_MAX_TOKENS,
+  REGENERATE_CARD_MAX_TOKENS,
 } from '../src/grill/deckTypes';
 import type {
   ProviderClient,
@@ -289,6 +292,30 @@ describe('generateDeck — id minting', () => {
       expect(new Set([deck1.id, deck2.id, deck3.id]).size).toBeGreaterThan(1);
     } else {
       expect(deck1.id).not.toBe(deck2.id);
+    }
+  });
+});
+
+describe('grill output budgets', () => {
+  it('are raised for reasoning models and stay under the 4096 floor', () => {
+    // Each budget is a ceiling shared between reasoning tokens and the
+    // visible reply. The previous values (1800/1000/1200/500) were
+    // spent thinking on any current flagship model. All must stay under
+    // 4096, the output cap of older models.
+    const budgets = {
+      GENERATE_MAX_TOKENS,
+      JUDGE_MAX_TOKENS,
+      REPHRASE_MAX_TOKENS,
+      REGENERATE_CARD_MAX_TOKENS,
+    };
+    expect(budgets).toEqual({
+      GENERATE_MAX_TOKENS: 4000,
+      JUDGE_MAX_TOKENS: 3000,
+      REPHRASE_MAX_TOKENS: 3000,
+      REGENERATE_CARD_MAX_TOKENS: 2000,
+    });
+    for (const v of Object.values(budgets)) {
+      expect(v).toBeLessThan(4096);
     }
   });
 });
