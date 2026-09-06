@@ -8,6 +8,9 @@ import {
   DECK_SIZE,
   DeckGenerationError,
   GENERATE_MAX_TOKENS,
+  JUDGE_MAX_TOKENS,
+  REPHRASE_MAX_TOKENS,
+  REGENERATE_CARD_MAX_TOKENS,
 } from '../src/grill/deckTypes';
 import type {
   ProviderClient,
@@ -44,6 +47,7 @@ const stubProvider = (
     }
     return {
       text,
+      stopReason: 'complete' as const,
       usage: {inputTokens: 1, outputTokens: 1},
       latencyMs: 1,
       modelId: opts.model,
@@ -219,6 +223,75 @@ describe('generateDeck — error paths', () => {
     ).rejects.toBeInstanceOf(DeckGenerationError);
   });
 
+  it.each([
+    ['truncated', /cut off/i],
+    ['refused', /declined/i],
+    ['context_overflow', /new chat/i],
+  ] as const)(
+    'reports %s as a provider error, not "did not return valid JSON"',
+    async (stopReason, pattern) => {
+      // The whole point of carrying a stop reason: a budget spent on
+      // reasoning used to reach the JSON parser and surface as
+      // "Model did not return valid JSON", blaming the model for a
+      // limit we set. Deck generation is the likeliest thing to
+      // truncate — five cards plus reasoning against a 4000 ceiling.
+      const provider: ProviderClient = {
+        id: 'fake',
+        async send() {
+          return {
+            text: '[{"partial":',
+            stopReason,
+            usage: {inputTokens: 1, outputTokens: 1},
+            latencyMs: 1,
+            modelId: 'm',
+          };
+        },
+      };
+      await expect(
+        generateDeck({
+          client: provider,
+          apiKey: 'k',
+          model: 'm',
+          pageContext: PAGE,
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toMatchObject({kind: 'provider'});
+      await expect(
+        generateDeck({
+          client: provider,
+          apiKey: 'k',
+          model: 'm',
+          pageContext: PAGE,
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow(pattern);
+    },
+  );
+
+  it('rejects an empty reply before it reaches the JSON parser', async () => {
+    const provider: ProviderClient = {
+      id: 'fake',
+      async send() {
+        return {
+          text: '',
+          stopReason: 'complete' as const,
+          usage: {inputTokens: 1, outputTokens: 1},
+          latencyMs: 1,
+          modelId: 'm',
+        };
+      },
+    };
+    await expect(
+      generateDeck({
+        client: provider,
+        apiKey: 'k',
+        model: 'm',
+        pageContext: PAGE,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({kind: 'provider'});
+  });
+
   it('throws DeckGenerationError(parse) on malformed JSON', async () => {
     await expect(
       generateDeck({
@@ -288,6 +361,30 @@ describe('generateDeck — id minting', () => {
       expect(new Set([deck1.id, deck2.id, deck3.id]).size).toBeGreaterThan(1);
     } else {
       expect(deck1.id).not.toBe(deck2.id);
+    }
+  });
+});
+
+describe('grill output budgets', () => {
+  it('are raised for reasoning models and stay under the 4096 floor', () => {
+    // Each budget is a ceiling shared between reasoning tokens and the
+    // visible reply. The previous values (1800/1000/1200/500) were
+    // spent thinking on any current flagship model. All must stay under
+    // 4096, the output cap of older models.
+    const budgets = {
+      GENERATE_MAX_TOKENS,
+      JUDGE_MAX_TOKENS,
+      REPHRASE_MAX_TOKENS,
+      REGENERATE_CARD_MAX_TOKENS,
+    };
+    expect(budgets).toEqual({
+      GENERATE_MAX_TOKENS: 4000,
+      JUDGE_MAX_TOKENS: 3000,
+      REPHRASE_MAX_TOKENS: 3000,
+      REGENERATE_CARD_MAX_TOKENS: 2000,
+    });
+    for (const v of Object.values(budgets)) {
+      expect(v).toBeLessThan(4096);
     }
   });
 });

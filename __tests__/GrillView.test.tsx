@@ -102,6 +102,7 @@ const scriptedProvider = (
     const sys = req.systemPrompt;
     const respond = (text: string) => ({
       text,
+      stopReason: 'complete' as const,
       usage: {inputTokens: 1, outputTokens: 1},
       latencyMs: 1,
       modelId: opts.model,
@@ -687,6 +688,7 @@ describe('GrillView — Grill again aborts in-flight regen (no stale swap)', () 
       send(req, opts) {
         const respond = (text: string) => ({
           text,
+          stopReason: 'complete' as const,
           usage: {inputTokens: 1, outputTokens: 1},
           latencyMs: 1,
           modelId: opts.model,
@@ -789,6 +791,7 @@ describe('GrillView — error + retry', () => {
       async send(req, opts) {
         const respond = (text: string) => ({
           text,
+          stopReason: 'complete' as const,
           usage: {inputTokens: 1, outputTokens: 1},
           latencyMs: 1,
           modelId: opts.model,
@@ -822,6 +825,7 @@ describe('GrillView — error + retry', () => {
         }
         return {
           text: '[]',
+          stopReason: 'complete' as const,
           usage: {inputTokens: 1, outputTokens: 1},
           latencyMs: 1,
           modelId: opts.model,
@@ -844,6 +848,7 @@ describe('GrillView — error + retry', () => {
       async send(_req, opts) {
         return {
           text: 'nothing parseable here',
+          stopReason: 'complete' as const,
           usage: {inputTokens: 1, outputTokens: 1},
           latencyMs: 1,
           modelId: opts.model,
@@ -913,6 +918,7 @@ describe('GrillView — unmount mid-flight', () => {
       send(_req, opts) {
         return new Promise<{
           text: string;
+          stopReason: 'complete';
           usage: {inputTokens: number; outputTokens: number};
           latencyMs: number;
           modelId: string;
@@ -921,6 +927,7 @@ describe('GrillView — unmount mid-flight', () => {
             resolve: (text: string) =>
               resolve({
                 text,
+                stopReason: 'complete' as const,
                 usage: {inputTokens: 1, outputTokens: 1},
                 latencyMs: 1,
                 modelId: opts.model,
@@ -965,6 +972,7 @@ describe('GrillView — unmount mid-flight', () => {
         if (sys.startsWith('You are a strict reviewer')) {
           return Promise.resolve({
             text: '[]',
+            stopReason: 'complete' as const,
             usage: {inputTokens: 1, outputTokens: 1},
             latencyMs: 1,
             modelId: opts.model,
@@ -974,6 +982,7 @@ describe('GrillView — unmount mid-flight', () => {
           phase = 'rephrase';
           return Promise.resolve({
             text: DECK_BODY,
+            stopReason: 'complete' as const,
             usage: {inputTokens: 1, outputTokens: 1},
             latencyMs: 1,
             modelId: opts.model,
@@ -985,6 +994,7 @@ describe('GrillView — unmount mid-flight', () => {
               resolve: (text: string) =>
                 resolve({
                   text,
+                  stopReason: 'complete' as const,
                   usage: {inputTokens: 1, outputTokens: 1},
                   latencyMs: 1,
                   modelId: opts.model,
@@ -994,6 +1004,7 @@ describe('GrillView — unmount mid-flight', () => {
         }
         return Promise.resolve({
           text: '[]',
+          stopReason: 'complete' as const,
           usage: {inputTokens: 1, outputTokens: 1},
           latencyMs: 1,
           modelId: opts.model,
@@ -1031,6 +1042,7 @@ describe('GrillView — unmount mid-flight', () => {
         if (sys.startsWith('You are a strict reviewer')) {
           return Promise.resolve({
             text: '[]',
+            stopReason: 'complete' as const,
             usage: {inputTokens: 1, outputTokens: 1},
             latencyMs: 1,
             modelId: opts.model,
@@ -1040,6 +1052,7 @@ describe('GrillView — unmount mid-flight', () => {
           phase = 'rephrase';
           return Promise.resolve({
             text: DECK_BODY,
+            stopReason: 'complete' as const,
             usage: {inputTokens: 1, outputTokens: 1},
             latencyMs: 1,
             modelId: opts.model,
@@ -1052,6 +1065,7 @@ describe('GrillView — unmount mid-flight', () => {
         }
         return Promise.resolve({
           text: '[]',
+          stopReason: 'complete' as const,
           usage: {inputTokens: 1, outputTokens: 1},
           latencyMs: 1,
           modelId: opts.model,
@@ -1095,6 +1109,7 @@ describe('GrillView — unmount mid-flight', () => {
               resolve: (text) =>
                 resolve({
                   text,
+                  stopReason: 'complete' as const,
                   usage: {inputTokens: 1, outputTokens: 1},
                   latencyMs: 1,
                   modelId: opts.model,
@@ -1104,6 +1119,7 @@ describe('GrillView — unmount mid-flight', () => {
         }
         return Promise.resolve({
           text: '[]',
+          stopReason: 'complete' as const,
           usage: {inputTokens: 1, outputTokens: 1},
           latencyMs: 1,
           modelId: opts.model,
@@ -1134,6 +1150,7 @@ describe('GrillView — unmount mid-flight', () => {
       send(req, opts) {
         const respond = (text: string) => ({
           text,
+          stopReason: 'complete' as const,
           usage: {inputTokens: 1, outputTokens: 1},
           latencyMs: 1,
           modelId: opts.model,
@@ -1188,6 +1205,7 @@ describe('GrillView — unmount mid-flight', () => {
       send(req, opts) {
         const respond = (text: string) => ({
           text,
+          stopReason: 'complete' as const,
           usage: {inputTokens: 1, outputTokens: 1},
           latencyMs: 1,
           modelId: opts.model,
@@ -1250,6 +1268,7 @@ describe('GrillView — unmount mid-flight', () => {
         }
         return Promise.resolve({
           text: '[]',
+          stopReason: 'complete' as const,
           usage: {inputTokens: 1, outputTokens: 1},
           latencyMs: 1,
           modelId: opts.model,

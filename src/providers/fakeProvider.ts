@@ -91,6 +91,7 @@ export const fakeProvider: ProviderClient = {
       keyword !== null ? CANNED_RESPONSES[keyword] : FALLBACK_RESPONSE;
     return {
       text,
+      stopReason: 'complete',
       usage: {
         inputTokens: DEFAULT_INPUT_TOKENS,
         outputTokens: DEFAULT_OUTPUT_TOKENS,

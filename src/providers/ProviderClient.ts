@@ -41,11 +41,34 @@ export interface ProviderRequest {
   signal: AbortSignal;
 }
 
+// Why generation ended, normalised across providers. Each client maps
+// its own field: `finish_reason` (OpenAI/DeepSeek), `stop_reason`
+// (Anthropic), `finishReason` (Gemini).
+//
+// This exists because every current flagship model reasons before it
+// answers, and those reasoning tokens come out of the SAME output
+// budget as the visible reply. A budget that runs out during reasoning
+// returns HTTP 200 with empty text — indistinguishable from a real
+// answer unless the stop reason is carried back to the UI.
+export type StopReason =
+  | 'complete' // finished naturally (includes stop_sequence)
+  | 'truncated' // output budget exhausted — often zero visible text
+  | 'refused' // provider declined (Anthropic refusal, Gemini SAFETY)
+  | 'context_overflow' // input exceeded the context window
+  | 'unknown'; // unrecognised — render text if present, else a failure
+
 export interface ProviderResponse {
   text: string;
+  // Required, not optional: an optional field lets a client silently
+  // omit it and reintroduces exactly the blindness above.
+  stopReason: StopReason;
   usage: {
     inputTokens: number;
     outputTokens: number;
+    // Tokens spent reasoning, when the provider reports them
+    // separately (OpenAI, Gemini). Anthropic folds thinking into
+    // outputTokens and reports no separate figure.
+    reasoningTokens?: number;
     // Prompt-cache accounting, when the provider reports it
     // (Anthropic today). Cache reads bill at ~10% of the input rate —
     // surfacing them keeps the cost picture honest in logs and lets

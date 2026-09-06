@@ -50,6 +50,7 @@ const stubProvider = (
     }
     return {
       text,
+      stopReason: 'complete' as const,
       usage: {inputTokens: 1, outputTokens: 1},
       latencyMs: 1,
       modelId: opts.model,
@@ -180,6 +181,34 @@ describe('rephraseDeck', () => {
     expect(captured?.userText).toContain('OLD STEM HERE');
     expect(captured?.imageBase64).toBeUndefined();
     expect(captured?.maxTokens).toBe(REPHRASE_MAX_TOKENS);
+  });
+
+  // A reply the model was cut off mid-JSON must report budget
+  // exhaustion, not "did not return valid JSON" — that blamed the model
+  // for a ceiling we set.
+  const stopProvider = (stopReason: 'truncated' | 'refused'): ProviderClient => ({
+    id: 'fake',
+    async send() {
+      return {
+        text: '[{"partial":',
+        stopReason,
+        usage: {inputTokens: 1, outputTokens: 1},
+        latencyMs: 1,
+        modelId: 'm',
+      };
+    },
+  });
+
+  it('reports a truncated reply as a provider error, not a parse error', async () => {
+    await expect(
+      rephraseDeck({
+        client: stopProvider('truncated'),
+        apiKey: 'sk',
+        model: 'm',
+        deck: deck([card('c1')]),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({kind: 'provider'});
   });
 
   it('wraps provider rejection as DeckGenerationError(provider)', async () => {

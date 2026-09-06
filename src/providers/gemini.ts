@@ -5,10 +5,37 @@
  * Auth:     ?key=<key> query parameter
  */
 
-import {throwHttpError} from './_http';
-import type {ProviderClient, ProviderRequest, ProviderResponse} from './ProviderClient';
+import {finiteOr,
+  finiteOrUndefined, throwHttpError} from './_http';
+import type {
+  ProviderClient,
+  ProviderRequest,
+  ProviderResponse,
+  StopReason,
+} from './ProviderClient';
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+// Gemini's finishReason enum. SAFETY and RECITATION are provider
+// declines; both arrive with an absent or empty `parts` array, which
+// without this mapping renders as a blank reply.
+const mapFinishReason = (raw: unknown): StopReason => {
+  switch (raw) {
+    case 'STOP':
+      return 'complete';
+    case 'MAX_TOKENS':
+      return 'truncated';
+    case 'SAFETY':
+    case 'RECITATION':
+    case 'PROHIBITED_CONTENT':
+    case 'BLOCKLIST':
+    case 'SPII':
+    case 'IMAGE_SAFETY':
+      return 'refused';
+    default:
+      return 'unknown';
+  }
+};
 
 export const createGeminiClient = (
   fetchFn: typeof fetch = globalThis.fetch,
@@ -53,17 +80,39 @@ export const createGeminiClient = (
       await throwHttpError('gemini', res);
     }
     const data = (await res.json()) as {
-      candidates?: Array<{content?: {parts?: Array<{text?: string}>}}>;
-      usageMetadata?: {promptTokenCount?: number; candidatesTokenCount?: number};
+      candidates?: Array<{
+        content?: {parts?: Array<{text?: string}>};
+        finishReason?: string;
+      }>;
+      // A prompt blocked before generation returns no candidates at
+      // all — the reason lives here instead.
+      promptFeedback?: {blockReason?: string};
+      usageMetadata?: {
+        promptTokenCount?: number;
+        candidatesTokenCount?: number;
+        thoughtsTokenCount?: number;
+      };
       modelVersion?: string;
     };
     const respParts = data.candidates?.[0]?.content?.parts ?? [];
     const text = respParts.map(p => p.text ?? '').join('');
     return {
       text,
+      // A prompt-level block has no candidate to carry a finishReason,
+      // so it would otherwise read as 'unknown' and tell the user to
+      // retry something that will be blocked again.
+      stopReason:
+        data.promptFeedback?.blockReason !== undefined
+          ? 'refused'
+          : mapFinishReason(data.candidates?.[0]?.finishReason),
       usage: {
-        inputTokens: Number(data.usageMetadata?.promptTokenCount ?? 0),
-        outputTokens: Number(data.usageMetadata?.candidatesTokenCount ?? 0),
+        // "Number of tokens of thoughts for thinking models" — billed
+        // as output and drawn from the same maxOutputTokens budget.
+        reasoningTokens: finiteOrUndefined(
+          data.usageMetadata?.thoughtsTokenCount,
+        ),
+        inputTokens: finiteOr(data.usageMetadata?.promptTokenCount, 0),
+        outputTokens: finiteOr(data.usageMetadata?.candidatesTokenCount, 0),
       },
       latencyMs: Date.now() - start,
       modelId: typeof data.modelVersion === 'string' ? data.modelVersion : opts.model,
