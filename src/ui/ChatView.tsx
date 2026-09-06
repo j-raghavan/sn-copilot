@@ -75,7 +75,11 @@ import {useProviderClient} from './useProviderClient';
 // under 10s; 60s leaves headroom for slow networks. The timeout
 // aborts the request and unblocks the in-flight guard so a hung
 // call can never permanently lock further sends.
-const SEND_TIMEOUT_MS = 60_000;
+// Raised alongside the output budget below. A reasoning model spends
+// tokens thinking before it emits anything, so the same reply takes
+// materially longer than it did from a non-reasoning model — 60s
+// turned a slow success into an abort. Matches Grill's heaviest call.
+const SEND_TIMEOUT_MS = 120_000;
 
 // Three-step font scaling. Scale factors keep e-ink rendering
 // readable across 7.8" and 10.3" devices without per-device tables.

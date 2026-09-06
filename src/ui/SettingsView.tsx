@@ -65,6 +65,11 @@ export type SettingsViewProps = {
   onClose: () => void;
 };
 
+// Test Connection sends a trivial prompt, but a reasoning model still
+// thinks before answering it — 30s was short enough to abort a model
+// that works, making it look broken during setup.
+const TEST_CONNECTION_TIMEOUT_MS = 120_000;
+
 const PROVIDER_LABEL: Record<ProviderId, string> = {
   anthropic: 'Anthropic (Claude)',
   openai: 'OpenAI',
@@ -209,7 +214,7 @@ function SettingsViewBody(props: {
     const start = Date.now();
     const ctl = new AbortController();
     testCtlRef.current = ctl;
-    const timeout = setTimeout(() => ctl.abort(), 30_000);
+    const timeout = setTimeout(() => ctl.abort(), TEST_CONNECTION_TIMEOUT_MS);
     try {
       const client = createProviderClient(active.provider);
       const r = await client.send(

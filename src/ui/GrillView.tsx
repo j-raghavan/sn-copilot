@@ -64,12 +64,14 @@ import {
 import {sanitizeProviderError} from './sanitizeProviderError';
 import GrillCard from './GrillCard';
 
-// Hard ceilings, mirrored from ChatView's send timeout. Generation
-// is the slowest call (~6-15s on a real provider), so we give it
-// double the chat budget.
+// Hard ceilings, mirrored from ChatView's send timeout. Generation is
+// the slowest call (~6-15s on a non-reasoning provider, longer on a
+// reasoning one, which spends tokens thinking before emitting).
 const GENERATE_TIMEOUT_MS = 120_000;
 const JUDGE_TIMEOUT_MS = 90_000;
-const REGENERATE_TIMEOUT_MS = 60_000;
+// Raised with its output budget — regenerate is no longer the cheapest
+// call once the model reasons first.
+const REGENERATE_TIMEOUT_MS = 90_000;
 const REPHRASE_TIMEOUT_MS = 90_000;
 
 type Phase = 'generating' | 'grilling' | 'done' | 'error';
