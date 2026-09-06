@@ -389,6 +389,117 @@ describe('ChatView — provider rejection', () => {
     }
   });
 
+  it.each([
+    ['truncated', '', /cut off/i],
+    ['complete', '', /empty reply/i],
+    ['unknown', '   \n  ', /empty reply/i],
+    ['refused', 'I cannot help with that', /declined/i],
+    ['context_overflow', 'partial', /new chat/i],
+  ] as const)(
+    'stopReason=%s with text %p surfaces an error bubble, not a blank one',
+    async (stopReason, text, pattern) => {
+      const fp = require('../src/providers/fakeProvider').default;
+      const spy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
+        text,
+        stopReason,
+        usage: {inputTokens: 1, outputTokens: 1},
+        latencyMs: 1,
+        modelId: 'fake-model-1',
+      });
+      const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const {tree} = render();
+        act(() => {
+          findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
+        });
+        await flushFakeProvider();
+        const shown = findAllText(tree).join(' | ');
+        expect(shown).toMatch(pattern);
+        // The user's own turn survives the failure, as it does for a
+        // thrown network error.
+        expect(shown).toContain('Summarize this page');
+        // A refusal's prose must not be presented as a normal answer.
+        if (stopReason === 'refused') {
+          expect(shown).not.toContain('I cannot help with that');
+        }
+      } finally {
+        spy.mockRestore();
+        log.mockRestore();
+      }
+    },
+  );
+
+  it('keeps a truncated reply that has text, marked as cut off', async () => {
+    const fp = require('../src/providers/fakeProvider').default;
+    const spy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
+      text: 'Here is the first half of the summary',
+      stopReason: 'truncated' as const,
+      usage: {inputTokens: 1, outputTokens: 1},
+      latencyMs: 1,
+      modelId: 'fake-model-1',
+    });
+    try {
+      const {tree} = render();
+      act(() => {
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
+      });
+      await flushFakeProvider();
+      const shown = findAllText(tree).join(' | ');
+      // Output the user paid for is kept — but flagged, so it does not
+      // read as a finished answer.
+      expect(shown).toContain('Here is the first half of the summary');
+      expect(shown).toMatch(/cut off/i);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('logs reasoningTokens when present and omits the field when absent', async () => {
+    const fp = require('../src/providers/fakeProvider').default;
+    // infoLog routes to console.warn (src/diagnostics/log.ts:24).
+    const log = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const spy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
+        text: 'ok',
+        stopReason: 'complete' as const,
+        usage: {inputTokens: 1, outputTokens: 1, reasoningTokens: 1500},
+        latencyMs: 1,
+        modelId: 'fake-model-1',
+      });
+      const {tree} = render();
+      act(() => {
+        findByTestID(tree, 'chat-suggestion-summarize').props.onPress();
+      });
+      await flushFakeProvider();
+      expect(
+        log.mock.calls.map(c => c.join(' ')).some(l => l.includes('reasoningTokens=1500')),
+      ).toBe(true);
+      spy.mockRestore();
+      log.mockClear();
+
+      // Absent arm — the field must not appear at all rather than
+      // printing "undefined".
+      const spy2 = jest.spyOn(fp, 'send').mockResolvedValueOnce({
+        text: 'ok',
+        stopReason: 'complete' as const,
+        usage: {inputTokens: 1, outputTokens: 1},
+        latencyMs: 1,
+        modelId: 'fake-model-1',
+      });
+      const second = render();
+      act(() => {
+        findByTestID(second.tree, 'chat-suggestion-summarize').props.onPress();
+      });
+      await flushFakeProvider();
+      expect(
+        log.mock.calls.map(c => c.join(' ')).some(l => l.includes('reasoningTokens')),
+      ).toBe(false);
+      spy2.mockRestore();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it('shows an HTTP status summary for upstream HTTP errors', async () => {
     const fp = require('../src/providers/fakeProvider').default;
     const spy = jest

@@ -63,7 +63,10 @@ import {buildProviderHistory} from './providerHistory';
 import {shouldAttachPageContext, type SendSource} from './contextRouting';
 import {buildMarkdownStyles} from './markdownStyles';
 import {markdownToPlainText} from './markdownToPlain';
-import {sanitizeProviderError} from './sanitizeProviderError';
+import {
+  ProviderStopError,
+  sanitizeProviderError,
+} from './sanitizeProviderError';
 import SetupChecklist from './SetupChecklist';
 import {SYSTEM_PROMPT} from './systemPrompt';
 import {useProviderClient} from './useProviderClient';
@@ -484,12 +487,35 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
       );
       infoLog(
         `[COPILOT_CHAT] response latencyMs=${r.latencyMs} ` +
-          `text.length=${r.text.length} model=${r.modelId}`,
+          `text.length=${r.text.length} model=${r.modelId}` +
+          // Only present on providers that report reasoning separately
+          // (OpenAI, Gemini). This is the number that lets the token
+          // budget above be tuned from measurement.
+          (r.usage.reasoningTokens === undefined
+            ? ''
+            : ` reasoningTokens=${r.usage.reasoningTokens}`),
       );
+      // Generation may have stopped without producing a usable answer
+      // even though the request itself succeeded. Throwing routes this
+      // into the catch below, which already persists the user's turn,
+      // clears the thinking placeholder, and marks the bubble isError
+      // so it is never replayed to the model as something it said.
+      const isEmpty = r.text.trim().length === 0;
+      if (r.stopReason === 'refused' || r.stopReason === 'context_overflow') {
+        throw new ProviderStopError(r.stopReason);
+      }
+      if (isEmpty) {
+        throw new ProviderStopError(r.stopReason);
+      }
       const assistantMsg: ChatMessage = {
         id: newId(),
         role: 'assistant',
-        text: r.text,
+        // A truncated reply that still has text is worth keeping — the
+        // user paid for it — but it must not read as a finished answer.
+        text:
+          r.stopReason === 'truncated'
+            ? `${r.text}\n\n_[reply was cut off]_`
+            : r.text,
         modelId: r.modelId,
         latencyMs: r.latencyMs,
       };
