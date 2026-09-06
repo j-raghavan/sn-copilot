@@ -44,6 +44,7 @@ const stubProvider = (
     }
     return {
       text,
+      stopReason: 'complete' as const,
       usage: {inputTokens: 1, outputTokens: 1},
       latencyMs: 1,
       modelId: opts.model,

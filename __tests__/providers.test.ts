@@ -22,7 +22,11 @@ import {
 import {createGeminiClient} from '../src/providers/gemini';
 import {createDeepSeekClient} from '../src/providers/deepseek';
 import {createProviderClient} from '../src/providers/index';
-import {throwHttpError} from '../src/providers/_http';
+import {
+  finiteOrUndefined,
+  mapChatCompletionsStopReason,
+  throwHttpError,
+} from '../src/providers/_http';
 
 type FetchSpy = jest.Mock<Promise<Response>, [string, RequestInit]>;
 
@@ -48,6 +52,42 @@ const baseReq = () => ({
   userText: 'Hello',
   maxTokens: 64,
   signal: new AbortController().signal,
+});
+
+describe('mapChatCompletionsStopReason', () => {
+  it.each([
+    ['stop', 'complete'],
+    ['length', 'truncated'],
+    ['content_filter', 'refused'],
+  ])('maps %s → %s', (raw, expected) => {
+    expect(mapChatCompletionsStopReason(raw)).toBe(expected);
+  });
+
+  it.each([undefined, null, '', 'tool_calls', 'something_new', 42])(
+    'maps unrecognised %p → unknown',
+    raw => {
+      // Degrading to 'unknown' rather than failing closed matters: a
+      // provider adding an enum member must not start erroring out
+      // replies that have real text in them.
+      expect(mapChatCompletionsStopReason(raw)).toBe('unknown');
+    },
+  );
+});
+
+describe('finiteOrUndefined', () => {
+  it('passes finite numbers through, including zero', () => {
+    expect(finiteOrUndefined(1500)).toBe(1500);
+    expect(finiteOrUndefined(0)).toBe(0);
+  });
+
+  it.each([NaN, Infinity, -Infinity, '1500', null, undefined, {}])(
+    'returns undefined for %p',
+    v => {
+      // NaN is the case that matters — it would propagate silently
+      // into logs and arithmetic.
+      expect(finiteOrUndefined(v)).toBeUndefined();
+    },
+  );
 });
 
 describe('throwHttpError', () => {
@@ -607,6 +647,167 @@ describe('createAnthropicClient — prompt caching', () => {
     const r = await client.send(baseReq(), {apiKey: 'k', model: 'm'});
     expect(r.usage.cacheReadInputTokens).toBe(0);
     expect(r.usage.cacheCreationInputTokens).toBe(0);
+  });
+});
+
+describe('stop-reason mapping — per provider', () => {
+  const okRes = (body: unknown) =>
+    ({
+      ok: true,
+      status: 200,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    }) as unknown as Response;
+
+  const sendWith = async (
+    make: (f: typeof fetch) => ReturnType<typeof createAnthropicClient>,
+    body: unknown,
+  ) => {
+    const fetchFn = jest.fn().mockResolvedValue(okRes(body));
+    const client = make(fetchFn as unknown as typeof fetch);
+    return client.send(baseReq(), {apiKey: 'k', model: 'm'});
+  };
+
+  const oaBody = (finish: unknown, content = 'hi') => ({
+    choices: [{message: {content}, finish_reason: finish}],
+    usage: {prompt_tokens: 1, completion_tokens: 1},
+  });
+
+  it.each([
+    ['stop', 'complete'],
+    ['length', 'truncated'],
+    ['content_filter', 'refused'],
+    [undefined, 'unknown'],
+  ])('openai: finish_reason %p → %s', async (finish, expected) => {
+    const r = await sendWith(createOpenAIClient, oaBody(finish));
+    expect(r.stopReason).toBe(expected);
+  });
+
+  it.each([
+    ['stop', 'complete'],
+    ['length', 'truncated'],
+    [undefined, 'unknown'],
+  ])('deepseek: finish_reason %p → %s', async (finish, expected) => {
+    const r = await sendWith(createDeepSeekClient, oaBody(finish));
+    expect(r.stopReason).toBe(expected);
+  });
+
+  it.each([
+    ['end_turn', 'complete'],
+    ['stop_sequence', 'complete'],
+    ['max_tokens', 'truncated'],
+    ['refusal', 'refused'],
+    ['model_context_window_exceeded', 'context_overflow'],
+    ['pause_turn', 'unknown'],
+    [undefined, 'unknown'],
+  ])('anthropic: stop_reason %p → %s', async (stop, expected) => {
+    const r = await sendWith(createAnthropicClient, {
+      content: [{type: 'text', text: 'hi'}],
+      usage: {input_tokens: 1, output_tokens: 1},
+      stop_reason: stop,
+    });
+    expect(r.stopReason).toBe(expected);
+  });
+
+  it.each([
+    ['STOP', 'complete'],
+    ['MAX_TOKENS', 'truncated'],
+    ['SAFETY', 'refused'],
+    ['RECITATION', 'refused'],
+    ['OTHER', 'unknown'],
+    [undefined, 'unknown'],
+  ])('gemini: finishReason %p → %s', async (finish, expected) => {
+    const r = await sendWith(createGeminiClient, {
+      candidates: [{content: {parts: [{text: 'hi'}]}, finishReason: finish}],
+      usageMetadata: {promptTokenCount: 1, candidatesTokenCount: 1},
+    });
+    expect(r.stopReason).toBe(expected);
+  });
+
+  it('gemini: MAX_TOKENS with no parts yields truncated and empty text', async () => {
+    // The exact shape a thinking model produces when the budget is
+    // spent before any visible output — previously a blank bubble.
+    const r = await sendWith(createGeminiClient, {
+      candidates: [{finishReason: 'MAX_TOKENS'}],
+      usageMetadata: {promptTokenCount: 1, candidatesTokenCount: 0},
+    });
+    expect(r.stopReason).toBe('truncated');
+    expect(r.text).toBe('');
+  });
+});
+
+describe('reasoning-token accounting', () => {
+  const okRes = (body: unknown) =>
+    ({ok: true, status: 200, json: async () => body}) as unknown as Response;
+
+  it('openai reads completion_tokens_details.reasoning_tokens', async () => {
+    const fetchFn = jest.fn().mockResolvedValue(
+      okRes({
+        choices: [{message: {content: 'hi'}, finish_reason: 'stop'}],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 1700,
+          completion_tokens_details: {reasoning_tokens: 1500},
+        },
+      }),
+    );
+    const r = await createOpenAIClient(
+      fetchFn as unknown as typeof fetch,
+    ).send(baseReq(), {apiKey: 'k', model: 'm'});
+    expect(r.usage.reasoningTokens).toBe(1500);
+  });
+
+  it('gemini reads thoughtsTokenCount', async () => {
+    const fetchFn = jest.fn().mockResolvedValue(
+      okRes({
+        candidates: [{content: {parts: [{text: 'hi'}]}, finishReason: 'STOP'}],
+        usageMetadata: {
+          promptTokenCount: 10,
+          candidatesTokenCount: 900,
+          thoughtsTokenCount: 800,
+        },
+      }),
+    );
+    const r = await createGeminiClient(
+      fetchFn as unknown as typeof fetch,
+    ).send(baseReq(), {apiKey: 'k', model: 'm'});
+    expect(r.usage.reasoningTokens).toBe(800);
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['malformed', 'lots'],
+  ])('openai: %s reasoning_tokens → undefined, never NaN', async (_l, v) => {
+    const fetchFn = jest.fn().mockResolvedValue(
+      okRes({
+        choices: [{message: {content: 'hi'}, finish_reason: 'stop'}],
+        usage: {
+          prompt_tokens: 1,
+          completion_tokens: 1,
+          completion_tokens_details: {reasoning_tokens: v},
+        },
+      }),
+    );
+    const r = await createOpenAIClient(
+      fetchFn as unknown as typeof fetch,
+    ).send(baseReq(), {apiKey: 'k', model: 'm'});
+    expect(r.usage.reasoningTokens).toBeUndefined();
+  });
+
+  it('anthropic reports no separate reasoning count', async () => {
+    const fetchFn = jest.fn().mockResolvedValue(
+      okRes({
+        content: [{type: 'text', text: 'hi'}],
+        usage: {input_tokens: 1, output_tokens: 900},
+        stop_reason: 'end_turn',
+      }),
+    );
+    const r = await createAnthropicClient(
+      fetchFn as unknown as typeof fetch,
+    ).send(baseReq(), {apiKey: 'k', model: 'm'});
+    // Thinking is folded into output_tokens by design.
+    expect(r.usage.reasoningTokens).toBeUndefined();
+    expect(r.usage.outputTokens).toBe(900);
   });
 });
 

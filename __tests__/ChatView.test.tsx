@@ -459,6 +459,7 @@ describe('ChatView — per-bubble copy', () => {
     const fp = require('../src/providers/fakeProvider').default;
     const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
       text: '### Summary\n\n- **bold** point\n- a *italic* point',
+      stopReason: 'complete' as const,
       usage: {inputTokens: 1, outputTokens: 1},
       latencyMs: 1,
       modelId: 'fake-model-1',
@@ -663,6 +664,7 @@ describe('ChatView — pageContext composition', () => {
     const fakeProviderRef = require('../src/providers/fakeProvider').default;
     const sendSpy = jest.spyOn(fakeProviderRef, 'send').mockResolvedValueOnce({
       text: 'reply',
+      stopReason: 'complete' as const,
       usage: {inputTokens: 1, outputTokens: 1},
       latencyMs: 1,
       modelId: 'fake-model-1',
@@ -790,6 +792,7 @@ describe('ChatView — provider-driven image gate', () => {
     const fp = require('../src/providers/fakeProvider').default;
     const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
       text: 'ok',
+      stopReason: 'complete' as const,
       usage: {inputTokens: 1, outputTokens: 1},
       latencyMs: 1,
       modelId: 'deepseek-chat',
@@ -835,6 +838,7 @@ describe('ChatView — provider-driven image gate', () => {
     const fp = require('../src/providers/fakeProvider').default;
     const sendSpy = jest.spyOn(fp, 'send').mockResolvedValueOnce({
       text: 'ok',
+      stopReason: 'complete' as const,
       usage: {inputTokens: 1, outputTokens: 1},
       latencyMs: 1,
       modelId: 'fake-model-1',

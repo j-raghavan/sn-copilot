@@ -9,7 +9,7 @@
  * (choices[0].message.content + usage).
  */
 
-import {throwHttpError} from './_http';
+import {mapChatCompletionsStopReason, throwHttpError} from './_http';
 import type {ProviderClient, ProviderRequest, ProviderResponse} from './ProviderClient';
 
 const ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
@@ -58,13 +58,21 @@ export const createDeepSeekClient = (
       await throwHttpError('deepseek', res);
     }
     const data = (await res.json()) as {
-      choices?: Array<{message?: {content?: string}}>;
+      choices?: Array<{
+        message?: {content?: string};
+        finish_reason?: string;
+      }>;
       usage?: {prompt_tokens?: number; completion_tokens?: number};
       model?: string;
     };
     const text = data.choices?.[0]?.message?.content ?? '';
     return {
       text,
+      // Chat Completions compatible — the same mapper as OpenAI, so the
+      // two cannot drift apart.
+      stopReason: mapChatCompletionsStopReason(
+        data.choices?.[0]?.finish_reason,
+      ),
       usage: {
         inputTokens: Number(data.usage?.prompt_tokens ?? 0),
         outputTokens: Number(data.usage?.completion_tokens ?? 0),
