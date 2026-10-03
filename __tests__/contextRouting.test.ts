@@ -8,6 +8,9 @@
  *   4. Off-topic generic queries do NOT match (general knowledge,
  *      personal small talk, code unrelated to the page).
  *   5. Case-insensitive matching.
+ *   6. Questions about the user's own annotations (handwriting, margin
+ *      notes, highlights) attach the page; look-alike general queries
+ *      ("profit margin", "match highlights") do not.
  */
 import {
   isPageReferential,
@@ -55,6 +58,37 @@ describe('isPageReferential — off-topic', () => {
     expect(isPageReferential('')).toBe(false);
     expect(isPageReferential('   ')).toBe(false);
     expect(isPageReferential('\n  \t')).toBe(false);
+  });
+});
+
+describe('isPageReferential — the user\'s annotations', () => {
+  it.each([
+    'What did I write on THE margin',
+    'what did i write here',
+    'What have I highlighted?',
+    "what I've underlined so far",
+    'explain what I wrote',
+    'what did I circle',
+    'summarise my annotations',
+    'explain my highlights',
+    'what do these scribbles say',
+    'read the markings',
+    'expand on the note in the margin',
+    'turn my margin notes into a list',
+    'why is the highlighted passage important?',
+    'define the underlined words',
+  ])('matches: %p', (text) => {
+    expect(isPageReferential(text)).toBe(true);
+  });
+
+  it.each([
+    "what's the profit margin on coffee?",
+    'explain margin of error in polling',
+    'show me the highlights of the 2022 world cup',
+    'how do I underline text in Word?',
+    'what did they write in the constitution?',
+  ])('does NOT match: %p', (text) => {
+    expect(isPageReferential(text)).toBe(false);
   });
 });
 
