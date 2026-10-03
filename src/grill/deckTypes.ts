@@ -85,10 +85,16 @@ export const DECK_SIZE = 5;
 
 // Token budgets per call. Conservative — provider responses cluster
 // well under these in practice but a dense EPUB page can be wordy.
-export const GENERATE_MAX_TOKENS = 1800;
-export const JUDGE_MAX_TOKENS = 1000;
-export const REPHRASE_MAX_TOKENS = 1200;
-export const REGENERATE_CARD_MAX_TOKENS = 500;
+// Output budgets. Each is a ceiling shared between the model's
+// reasoning tokens and its visible reply, so the previous values were
+// spent thinking on any current flagship model and returned nothing.
+// All stay under 4096, the output cap of older models — Anthropic
+// rejects a max_tokens above a model's maximum. Provisional: tune from
+// the reasoningTokens figure logged on each send.
+export const GENERATE_MAX_TOKENS = 4000;
+export const JUDGE_MAX_TOKENS = 3000;
+export const REPHRASE_MAX_TOKENS = 3000;
+export const REGENERATE_CARD_MAX_TOKENS = 2000;
 
 // Rubric scoring bounds + the threshold below which a card is
 // flagged for silent regeneration. Pulled out as constants so the

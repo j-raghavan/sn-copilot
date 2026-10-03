@@ -12,6 +12,7 @@
 
 import {composeUserText} from '../scope/composePrompt';
 import type {ProviderClient} from '../providers/ProviderClient';
+import {stopReasonMessage, usabilityError} from '../providers/stopReason';
 import type {PageContext} from '../scope/pageContext';
 import {
   Card,
@@ -143,6 +144,15 @@ export const generateDeck = async (args: GenerateDeckArgs): Promise<Deck> => {
       'provider',
       e instanceof Error ? e.message : String(e),
     );
+  }
+
+  // Checked OUTSIDE the parse try below: budget exhaustion and provider
+  // declines must report their own cause, not be re-labelled "the model
+  // did not return valid JSON" — which blames the model for a limit we
+  // set. Grill cannot use a partial reply; truncated JSON does not parse.
+  const unusable = usabilityError(response, {acceptPartial: false});
+  if (unusable !== null) {
+    throw new DeckGenerationError('provider', stopReasonMessage(unusable));
   }
 
   let rawArray: unknown[];

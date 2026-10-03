@@ -9,11 +9,36 @@
  * `usage.output_tokens`.
  */
 
-import {throwHttpError} from './_http';
-import type {ProviderClient, ProviderRequest, ProviderResponse} from './ProviderClient';
+import {finiteOr, throwHttpError} from './_http';
+import type {
+  ProviderClient,
+  ProviderRequest,
+  ProviderResponse,
+  StopReason,
+} from './ProviderClient';
 
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const VERSION = '2023-06-01';
+
+// Anthropic's stop_reason enum. `refusal` is a safety-classifier
+// decline and must be checked BEFORE the content is treated as an
+// answer; `model_context_window_exceeded` is an input-side failure the
+// user resolves by starting a new chat, not by retrying.
+const mapStopReason = (raw: unknown): StopReason => {
+  switch (raw) {
+    case 'end_turn':
+    case 'stop_sequence':
+      return 'complete';
+    case 'max_tokens':
+      return 'truncated';
+    case 'refusal':
+      return 'refused';
+    case 'model_context_window_exceeded':
+      return 'context_overflow';
+    default:
+      return 'unknown';
+  }
+};
 
 const extractText = (data: unknown): string => {
   const d = data as {content?: Array<{type?: string; text?: string}>};
@@ -108,16 +133,18 @@ export const createAnthropicClient = (
         cache_creation_input_tokens?: number;
       };
       model?: string;
+      stop_reason?: string;
     };
     return {
       text: extractText(data),
+      stopReason: mapStopReason(data.stop_reason),
       usage: {
-        inputTokens: Number(data.usage?.input_tokens ?? 0),
-        outputTokens: Number(data.usage?.output_tokens ?? 0),
-        cacheReadInputTokens: Number(data.usage?.cache_read_input_tokens ?? 0),
-        cacheCreationInputTokens: Number(
-          data.usage?.cache_creation_input_tokens ?? 0,
-        ),
+        inputTokens: finiteOr(data.usage?.input_tokens, 0),
+        outputTokens: finiteOr(data.usage?.output_tokens, 0),
+        // No reasoningTokens: Anthropic folds thinking into
+        // output_tokens and exposes no separate figure.
+        cacheReadInputTokens: finiteOr(data.usage?.cache_read_input_tokens, 0),
+        cacheCreationInputTokens: finiteOr(data.usage?.cache_creation_input_tokens, 0),
       },
       latencyMs: Date.now() - start,
       modelId: typeof data.model === 'string' ? data.model : opts.model,

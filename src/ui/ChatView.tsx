@@ -64,6 +64,7 @@ import {shouldAttachPageContext, type SendSource} from './contextRouting';
 import {buildMarkdownStyles} from './markdownStyles';
 import {markdownToPlainText} from './markdownToPlain';
 import {sanitizeProviderError} from './sanitizeProviderError';
+import {assertUsable} from '../providers/stopReason';
 import SetupChecklist from './SetupChecklist';
 import {SYSTEM_PROMPT} from './systemPrompt';
 import {useProviderClient} from './useProviderClient';
@@ -72,7 +73,23 @@ import {useProviderClient} from './useProviderClient';
 // under 10s; 60s leaves headroom for slow networks. The timeout
 // aborts the request and unblocks the in-flight guard so a hung
 // call can never permanently lock further sends.
-const SEND_TIMEOUT_MS = 60_000;
+// Raised alongside the output budget below. A reasoning model spends
+// tokens thinking before it emits anything, so the same reply takes
+// materially longer than it did from a non-reasoning model — 60s
+// turned a slow success into an abort. Matches Grill's heaviest call.
+const SEND_TIMEOUT_MS = 120_000;
+
+// Output budget for a chat send. This is a ceiling shared between the
+// model's reasoning tokens and its visible reply — every current
+// flagship model reasons first, so a small value is spent thinking and
+// returns nothing. 256 was also below the ~250-word target the system
+// prompt asks for (~325 tokens), so it truncated ordinary replies too.
+//
+// Deliberately under 4096: older models cap output there and Anthropic
+// rejects a max_tokens above a model's maximum, so a larger value would
+// break configurations that work today. Provisional — the reasoningTokens
+// figure logged on each send is what this should be tuned from.
+const CHAT_MAX_TOKENS = 4000;
 
 // Three-step font scaling. Scale factors keep e-ink rendering
 // readable across 7.8" and 10.3" devices without per-device tables.
@@ -140,6 +157,10 @@ type ChatMessage =
       // Rendered like any assistant bubble, but never replayed as
       // conversation history — see buildProviderHistory.
       isError?: boolean;
+      // Generation hit the output budget. Render-only: the notice is
+      // added by the bubble, never concatenated into `text`, so it is
+      // not replayed to the provider and not persisted into the text.
+      truncated?: boolean;
     }
   | {id: string; role: 'thinking'};
 
@@ -477,19 +498,41 @@ export default function ChatView(props: ChatViewProps): React.JSX.Element {
           userText,
           imageBase64,
           history: wireTurns,
-          maxTokens: 256,
+          maxTokens: CHAT_MAX_TOKENS,
           signal: ctl.signal,
         },
         {apiKey, model},
       );
       infoLog(
         `[COPILOT_CHAT] response latencyMs=${r.latencyMs} ` +
-          `text.length=${r.text.length} model=${r.modelId}`,
+          `text.length=${r.text.length} model=${r.modelId}` +
+          // Only present on providers that report reasoning separately
+          // (OpenAI, Gemini). This is the number that lets the token
+          // budget above be tuned from measurement.
+          (r.usage.reasoningTokens === undefined
+            ? ''
+            : ` reasoningTokens=${r.usage.reasoningTokens}`),
       );
+      // Generation may have stopped without producing a usable answer
+      // even though the request itself succeeded. Throwing routes this
+      // into the catch below, which already persists the user's turn,
+      // clears the thinking placeholder, and marks the bubble isError
+      // so it is never replayed to the model as something it said.
+      // Chat accepts a partial reply — the user paid for those tokens.
+      // Everything else (refused, context overflow, empty) throws into
+      // the catch below, which already persists the user's turn, clears
+      // the thinking placeholder, and marks the bubble isError so it is
+      // never replayed to the model as something it said.
+      assertUsable(r, {acceptPartial: true});
       const assistantMsg: ChatMessage = {
         id: newId(),
         role: 'assistant',
         text: r.text,
+        // Render-time flag, NOT baked into text: the marker must not
+        // travel back to the provider as words the model wrote, and it
+        // is persisted with the message, so a reloaded conversation
+        // would replay it forever.
+        truncated: r.stopReason === 'truncated' ? true : undefined,
         modelId: r.modelId,
         latencyMs: r.latencyMs,
       };
@@ -1052,6 +1095,11 @@ function ChatBubble({
       <Text style={styles.aiAvatar}>{'✦'}</Text>
       <View style={styles.aiBubble}>
         <Markdown style={mdStyles}>{msg.text}</Markdown>
+        {msg.truncated === true ? (
+          <Text testID={`chat-truncated-${msg.id}`} style={styles.truncatedNote}>
+            {'Reply was cut off — the model hit its output limit.'}
+          </Text>
+        ) : null}
         <View style={styles.bubbleFooter}>
           <TouchableOpacity
             testID={`chat-copy-${msg.id}`}
@@ -1248,6 +1296,12 @@ const styles = StyleSheet.create({
     color: '#000000',
     marginTop: 6,
     fontStyle: 'italic',
+  },
+  truncatedNote: {
+    color: '#000000',
+    marginTop: 6,
+    fontStyle: 'italic',
+    fontSize: 13,
   },
   bubbleFooter: {
     flexDirection: 'row',

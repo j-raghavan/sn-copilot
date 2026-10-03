@@ -53,6 +53,7 @@ const stubProvider = (
     }
     return {
       text,
+      stopReason: 'complete' as const,
       usage: {inputTokens: 1, outputTokens: 1},
       latencyMs: 1,
       modelId: opts.model,
@@ -163,6 +164,34 @@ describe('judgeDeck — adversarial responses', () => {
 });
 
 describe('judgeDeck — error paths', () => {
+  // A judge reply cut off mid-JSON must report budget exhaustion, not
+  // "did not return valid JSON" — that blamed the model for our ceiling.
+  const stopProvider = (): ProviderClient => ({
+    id: 'fake',
+    async send() {
+      return {
+        text: '[{"partial":',
+        stopReason: 'truncated' as const,
+        usage: {inputTokens: 1, outputTokens: 1},
+        latencyMs: 1,
+        modelId: 'm',
+      };
+    },
+  });
+
+  it('reports a truncated reply as a provider error, not a parse error', async () => {
+    await expect(
+      judgeDeck({
+        client: stopProvider(),
+        apiKey: 'sk',
+        model: 'm',
+        sourcePageText: 'src',
+        deck: deck([card('c1')]),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({kind: 'provider'});
+  });
+
   it('wraps provider rejection as DeckGenerationError(provider)', async () => {
     await expect(
       judgeDeck({

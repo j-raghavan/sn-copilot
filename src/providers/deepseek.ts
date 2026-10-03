@@ -9,7 +9,11 @@
  * (choices[0].message.content + usage).
  */
 
-import {throwHttpError} from './_http';
+import {
+  finiteOr,
+  mapChatCompletionsStopReason,
+  throwHttpError,
+} from './_http';
 import type {ProviderClient, ProviderRequest, ProviderResponse} from './ProviderClient';
 
 const ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
@@ -58,16 +62,28 @@ export const createDeepSeekClient = (
       await throwHttpError('deepseek', res);
     }
     const data = (await res.json()) as {
-      choices?: Array<{message?: {content?: string}}>;
+      choices?: Array<{
+        message?: {content?: string};
+        finish_reason?: string;
+      }>;
       usage?: {prompt_tokens?: number; completion_tokens?: number};
       model?: string;
     };
-    const text = data.choices?.[0]?.message?.content ?? '';
+    // Coerced, not trusted: a non-string `content` would make the
+    // caller's text.trim() throw. anthropic.ts guards its blocks the
+    // same way.
+    const rawContent = data.choices?.[0]?.message?.content;
+    const text = typeof rawContent === 'string' ? rawContent : '';
     return {
       text,
+      // Chat Completions compatible — the same mapper as OpenAI, so the
+      // two cannot drift apart.
+      stopReason: mapChatCompletionsStopReason(
+        data.choices?.[0]?.finish_reason,
+      ),
       usage: {
-        inputTokens: Number(data.usage?.prompt_tokens ?? 0),
-        outputTokens: Number(data.usage?.completion_tokens ?? 0),
+        inputTokens: finiteOr(data.usage?.prompt_tokens, 0),
+        outputTokens: finiteOr(data.usage?.completion_tokens, 0),
       },
       latencyMs: Date.now() - start,
       modelId: typeof data.model === 'string' ? data.model : opts.model,

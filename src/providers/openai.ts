@@ -14,7 +14,12 @@
  * to be one-or-the-other, chosen per call.
  */
 
-import {throwHttpError} from './_http';
+import {
+  finiteOr,
+  finiteOrUndefined,
+  mapChatCompletionsStopReason,
+  throwHttpError,
+} from './_http';
 import type {ProviderClient, ProviderRequest, ProviderResponse} from './ProviderClient';
 
 const ENDPOINT = 'https://api.openai.com/v1/chat/completions';
@@ -86,16 +91,36 @@ export const createOpenAIClient = (
       await throwHttpError('openai', res);
     }
     const data = (await res.json()) as {
-      choices?: Array<{message?: {content?: string}}>;
-      usage?: {prompt_tokens?: number; completion_tokens?: number};
+      choices?: Array<{
+        message?: {content?: string};
+        finish_reason?: string;
+      }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        completion_tokens_details?: {reasoning_tokens?: number};
+      };
       model?: string;
     };
-    const text = data.choices?.[0]?.message?.content ?? '';
+    // Coerced, not trusted: a non-string `content` would make the
+    // caller's text.trim() throw. anthropic.ts guards its blocks the
+    // same way.
+    const rawContent = data.choices?.[0]?.message?.content;
+    const text = typeof rawContent === 'string' ? rawContent : '';
     return {
       text,
+      stopReason: mapChatCompletionsStopReason(
+        data.choices?.[0]?.finish_reason,
+      ),
       usage: {
-        inputTokens: Number(data.usage?.prompt_tokens ?? 0),
-        outputTokens: Number(data.usage?.completion_tokens ?? 0),
+        // Reasoning tokens are billed as output and are drawn from the
+        // same budget as the visible reply — surfacing them is how the
+        // budget gets tuned from measurement rather than guesswork.
+        reasoningTokens: finiteOrUndefined(
+          data.usage?.completion_tokens_details?.reasoning_tokens,
+        ),
+        inputTokens: finiteOr(data.usage?.prompt_tokens, 0),
+        outputTokens: finiteOr(data.usage?.completion_tokens, 0),
       },
       latencyMs: Date.now() - start,
       modelId: typeof data.model === 'string' ? data.model : opts.model,
