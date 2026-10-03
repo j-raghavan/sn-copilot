@@ -212,6 +212,13 @@ subscribeToButtonEvents(async event => {
     manager: PluginManager,
     logger: consoleLogger,
     deleteFile: path => FileUtils.deleteFile(path),
+    penLayer: {
+      getMarkPages: docPath => PluginFileAPI.getMarkPages(docPath),
+      generateMarkThumbnails: (docPath, page, pngPath, size) =>
+        PluginFileAPI.generateMarkThumbnails(docPath, page, pngPath, size),
+      overlayPng: async (basePath, overlayPath) =>
+        (await CopilotOverlay.overlayPng(basePath, overlayPath)).success,
+    },
   }).catch(e => {
     console.log('[COPILOT] captureCurrentPage threw', String(e));
     return null;

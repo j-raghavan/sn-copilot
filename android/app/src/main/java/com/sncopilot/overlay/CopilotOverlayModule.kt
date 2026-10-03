@@ -473,6 +473,24 @@ class CopilotOverlayModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * Draws the PNG at overlayPath over the PNG at basePath, rewriting
+   * basePath. See PngComposite for why this is native and why a failure
+   * leaves basePath untouched.
+   */
+  @ReactMethod
+  fun overlayPng(basePath: String, overlayPath: String, promise: Promise) {
+    try {
+      val outcome = PngComposite.overlayInPlace(basePath, overlayPath)
+      Log.i(TAG, "[COPILOT_OVERLAY] overlayPng: ${outcome.code} ${outcome.message}")
+      promise.resolve(buildResult(outcome.success, outcome.code, outcome.message))
+    } catch (e: Throwable) {
+      val msg = "${e.javaClass.simpleName}: ${e.message}"
+      Log.e(TAG, "[COPILOT_OVERLAY] overlayPng: $msg", e)
+      promise.resolve(buildResult(success = false, code = "COMPOSITE_FAILED", message = msg))
+    }
+  }
+
+  /**
    * PBKDF2-HMAC-SHA256 via the JDK's `SecretKeyFactory`. On Hermes,
    * a pure-JS implementation runs at ~400 iters/sec on this device
    * (logcat 2026-05-10 measured 50k iters in 130s). The JDK path is

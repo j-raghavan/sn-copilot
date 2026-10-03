@@ -14,6 +14,8 @@
  *      logged but do not crash the bootstrap.
  *   8. The scratch-orphan sweep fires at bootstrap and the capture
  *      deps carry a deleteFile bridge.
+ *   9. The capture deps carry pen-layer bridges to PluginFileAPI's mark
+ *      APIs and to CopilotOverlay.overlayPng.
  */
 
 const registerButtonListenerCalls: Array<{
@@ -48,7 +50,10 @@ jest.mock('sn-plugin-lib', () => ({
     getPluginDirPath: () => mockGetPluginDirPath(),
   },
   PluginCommAPI: {},
-  PluginFileAPI: {},
+  PluginFileAPI: {
+    getMarkPages: jest.fn(async () => ({success: true, result: [2]})),
+    generateMarkThumbnails: jest.fn(async () => ({success: true, result: true})),
+  },
   PluginDocAPI: {},
   FileUtils: {
     exists: jest.fn(async () => false),
@@ -59,6 +64,11 @@ jest.mock('sn-plugin-lib', () => ({
 
 const mockOpen = jest.fn();
 const mockGetScreenSize = jest.fn();
+const mockOverlayPng = jest.fn(async (..._args: unknown[]) => ({
+  success: true,
+  code: 'OK',
+  message: '',
+}));
 const mockCleanupOldVersions = jest.fn(async (..._args: unknown[]) => ({
   success: true,
   freedBytes: 0,
@@ -88,6 +98,7 @@ jest.mock('../src/native/CopilotOverlay', () => {
       cryptoRandomBytes: jest.fn(cryptoRandomBytesMockImpl),
       cleanupOldVersions: (...args: unknown[]) =>
         mockCleanupOldVersions(...args),
+      overlayPng: (...args: unknown[]) => mockOverlayPng(...args),
     },
   };
 });
@@ -244,6 +255,51 @@ describe('index.js bootstrap', () => {
       '/plugin/scratch.png',
     );
     expect(FileUtils.deleteFile).toHaveBeenCalledWith('/plugin/scratch.png');
+  });
+
+  it('passes pen-layer bridges into the sidebar capture deps', async () => {
+    importBootstrap();
+    registerButtonListenerCalls[0].onButtonPress(okEvent(100)); // sidebar id
+    await drainMicrotasks();
+    const {penLayer} = mockCaptureCurrentPage.mock.calls[0][0] as {
+      penLayer: {
+        getMarkPages: (p: string) => Promise<unknown>;
+        generateMarkThumbnails: (
+          p: string,
+          page: number,
+          png: string,
+          size: {width: number; height: number},
+        ) => Promise<unknown>;
+        overlayPng: (base: string, overlay: string) => Promise<boolean>;
+      };
+    };
+    const {PluginFileAPI} = jest.requireMock('sn-plugin-lib') as {
+      PluginFileAPI: {getMarkPages: jest.Mock; generateMarkThumbnails: jest.Mock};
+    };
+    const size = {width: 1404, height: 1872};
+
+    await penLayer.getMarkPages('/doc.pdf');
+    expect(PluginFileAPI.getMarkPages).toHaveBeenCalledWith('/doc.pdf');
+    await penLayer.generateMarkThumbnails('/doc.pdf', 2, '/plugin/m.png', size);
+    expect(PluginFileAPI.generateMarkThumbnails).toHaveBeenCalledWith(
+      '/doc.pdf',
+      2,
+      '/plugin/m.png',
+      size,
+    );
+    // overlayPng narrows the structured native result to a boolean.
+    await expect(
+      penLayer.overlayPng('/plugin/p.png', '/plugin/m.png'),
+    ).resolves.toBe(true);
+    expect(mockOverlayPng).toHaveBeenCalledWith('/plugin/p.png', '/plugin/m.png');
+    mockOverlayPng.mockResolvedValueOnce({
+      success: false,
+      code: 'DECODE_FAILED',
+      message: '',
+    });
+    await expect(
+      penLayer.overlayPng('/plugin/p.png', '/plugin/m.png'),
+    ).resolves.toBe(false);
   });
 
   it('registers App + SnCopilotPanel components and inits the plugin manager', () => {

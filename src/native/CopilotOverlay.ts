@@ -24,6 +24,8 @@ export type OverlayResultCode =
   | 'ALGO_MISSING'
   | 'PBKDF2_FAILED'
   | 'RANDOM_FAILED'
+  | 'DECODE_FAILED'
+  | 'COMPOSITE_FAILED'
   | 'MODULE_MISSING';
 
 export type OverlayResult = {
@@ -74,6 +76,7 @@ type NativeShape = {
   ): Promise<CryptoResult>;
   cryptoRandomBytes(length: number): Promise<CryptoResult>;
   cleanupOldVersions(dirPath: string): Promise<CleanupResult>;
+  overlayPng(basePath: string, overlayPath: string): Promise<OverlayResult>;
 };
 
 const moduleMissingResult: OverlayResult = {
@@ -213,6 +216,20 @@ export async function cleanupOldVersions(
   return native.cleanupOldVersions(dirPath);
 }
 
+// Draws overlayPath over basePath, rewriting basePath; on any failure
+// basePath is left as it was. Lays a document page's handwriting over
+// its render (see PngComposite.kt).
+export async function overlayPng(
+  basePath: string,
+  overlayPath: string,
+): Promise<OverlayResult> {
+  const native = nativeOrNull();
+  if (!native || typeof native.overlayPng !== 'function') {
+    return moduleMissingResult;
+  }
+  return native.overlayPng(basePath, overlayPath);
+}
+
 // Convenience for tests / future callers that prefer a single object.
 const CopilotOverlay = {
   open,
@@ -225,5 +242,6 @@ const CopilotOverlay = {
   cryptoPbkdf2Sha256,
   cryptoRandomBytes,
   cleanupOldVersions,
+  overlayPng,
 };
 export default CopilotOverlay;
