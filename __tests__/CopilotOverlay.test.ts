@@ -52,6 +52,8 @@ const mockCleanupOldVersions = jest.fn(
   }),
 );
 
+const mockOverlayPng = jest.fn(async (..._args: unknown[]) => okResult);
+
 const fakeNative = {
   open: (...args: unknown[]) => mockOpen(...args),
   move: (...args: unknown[]) => mockMove(...args),
@@ -63,6 +65,7 @@ const fakeNative = {
   cryptoPbkdf2Sha256: (...args: unknown[]) => mockCryptoPbkdf2Sha256(...args),
   cryptoRandomBytes: (...args: unknown[]) => mockCryptoRandomBytes(...args),
   cleanupOldVersions: (...args: unknown[]) => mockCleanupOldVersions(...args),
+  overlayPng: (...args: unknown[]) => mockOverlayPng(...args),
 };
 
 const nativeModulesMock: {CopilotOverlay?: typeof fakeNative} = {
@@ -326,6 +329,33 @@ describe('CopilotOverlay (janitor wrapper)', () => {
     const r = await CopilotOverlay.cleanupOldVersions('/data/plugin/dir');
     expect(r.success).toBe(false);
     expect(r.kept).toBe('none');
+    nativeModulesMock.CopilotOverlay = fakeNative;
+  });
+});
+
+describe('CopilotOverlay (overlayPng wrapper)', () => {
+  it('forwards both paths and returns the native result', async () => {
+    nativeModulesMock.CopilotOverlay = fakeNative;
+    const r = await CopilotOverlay.overlayPng('/p/page.png', '/p/mark.png');
+    expect(mockOverlayPng).toHaveBeenCalledWith('/p/page.png', '/p/mark.png');
+    expect(r).toEqual(okResult);
+  });
+
+  it('returns MODULE_MISSING when the module is missing', async () => {
+    nativeModulesMock.CopilotOverlay = undefined;
+    const r = await CopilotOverlay.overlayPng('/p/page.png', '/p/mark.png');
+    expect(r.success).toBe(false);
+    expect(r.code).toBe('MODULE_MISSING');
+    nativeModulesMock.CopilotOverlay = fakeNative;
+  });
+
+  it('returns MODULE_MISSING when the host lacks the method', async () => {
+    const withoutOverlay = {...fakeNative} as Record<string, unknown>;
+    delete withoutOverlay.overlayPng;
+    nativeModulesMock.CopilotOverlay =
+      withoutOverlay as unknown as typeof fakeNative;
+    const r = await CopilotOverlay.overlayPng('/p/page.png', '/p/mark.png');
+    expect(r.code).toBe('MODULE_MISSING');
     nativeModulesMock.CopilotOverlay = fakeNative;
   });
 });

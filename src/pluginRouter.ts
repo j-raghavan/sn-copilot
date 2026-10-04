@@ -14,6 +14,8 @@ import {PluginManager} from 'sn-plugin-lib';
 export const BUTTON_ID_SIDEBAR = 100;
 export const BUTTON_ID_LASSO_NOTE = 200;
 export const BUTTON_ID_DOC_SELECT = 300;
+// The PilotChat's sidebar button (Notes only), shown as a full-screen plugin view.
+export const BUTTON_ID_PILOTCHAT = 400;
 
 // Type values come from sn-plugin-lib's NativePluginManager.d.ts.
 export const BUTTON_TYPE_SIDEBAR = 1;

@@ -36,6 +36,17 @@ const REFERENTIAL_PATTERNS: readonly RegExp[] = [
   /\b(what (is|are) missing|anything missing|unclear|ambiguous|inconsistent)\b/,
   // Question-about-author / source intents.
   /\b(who wrote|who is the author|what is the topic|main idea|key (points?|takeaways?))\b/,
+  // The user's own marks on the page: what they wrote, highlighted or
+  // underlined. Anchored to "I" so "what did they write" stays generic.
+  /\bwhat (did |have )?i('ve)? (write|wrote|written|mark(ed)?|highlight(ed)?|underline(d)?|circle(d)?|scribble(d)?|note(d)?)\b/,
+  // Margin notes. Anchored to a placement so "the profit margin" or
+  // "margin of error" stays generic.
+  /\b((in|on) (the|this|my) margins?|margin (notes?|comments?))\b/,
+  // Annotations as nouns. "highlights" only with my/these, so "the
+  // highlights of the match" stays generic.
+  /\b(my|these) (annotations?|highlights?|underlines?|scribbles?|markings?|marks)\b/,
+  /\bthe (annotations?|scribbles?|markings?)\b/,
+  /\b(highlighted|underlined|circled) (text|parts?|lines?|words?|passages?|sentences?|bits?)\b/,
 ];
 
 export const isPageReferential = (rawText: string): boolean => {

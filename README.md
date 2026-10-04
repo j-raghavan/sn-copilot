@@ -9,6 +9,8 @@
 
 An on-device AI chat sidebar for Supernote notes, PDFs, and EPUBs. Tap the **Copilot** button on the sidebar, ask the model to summarise the page, explain a section, or answer a question — the page screenshot and any extracted text go to the LLM you configured, and the reply lands in a panel on the right edge of the screen.
 
+In notes there is also **PilotChat**: write a question by hand on a full-screen page, and the answer is written back under your writing. See [PilotChat](#pilotchat--ask-in-your-own-handwriting-notes).
+
 ## Privacy is yours, not ours
 
 This plugin has **no backend**. It does not run a service, route your traffic through anyone's server, or hold a key on your behalf. You bring your own API key for Anthropic, OpenAI, Google Gemini, or DeepSeek; the plugin places your request directly against that provider's API and shows the response.
@@ -40,6 +42,10 @@ https://github.com/user-attachments/assets/4b66eead-0561-4d46-afdd-21919ff1b5be
 
 https://github.com/user-attachments/assets/ac096146-8aee-4304-af62-0f9a9776485b
 
+
+### PilotChat
+
+![PilotChat: write a question by hand, read the answer, insert it into your note](docs/pilotchat-intro.gif)
 
 ## What's new in v1.0.3
 
@@ -91,6 +97,36 @@ That's it. There is no account to create, no service to register against, no com
 You can change `model=` to any model the provider exposes — the plugin doesn't allow-list. If a model name is wrong the provider returns an HTTP error, which is shown verbatim in the chat as `Error: <provider>: HTTP <status>`.
 
 > **OpenAI gpt-5 / o-series users:** the plugin auto-detects newer reasoning + GPT-5 family model ids (`gpt-5*`, `o1*`, `o3*`, `o4*`) and sends `max_completion_tokens` instead of the legacy `max_tokens` field that those models reject. You don't need to do anything — just put the model id in `model=` and it works.
+
+## PilotChat — ask in your own handwriting (Notes)
+
+A full-screen page where you write a question with the pen and the answer is written back under it. The conversation carries on: follow-ups such as "dig deeper" know what you asked before.
+
+**Open it:** in a note, tap the **Plugins** button (the puzzle piece) on the sidebar, then **PilotChat**. Notes only.
+
+**Ask:** write a question anywhere on the page, in words or maths. Rest the pen for a moment, or tap **Ask**, and the answer appears under your writing. The page writes with a fine black pen and its eraser doesn't work yet; your note's own pen comes back when you close PilotChat.
+
+**The page:**
+
+| Control | What it does |
+|---|---|
+| Status line | What PilotChat read from your writing, or what it is doing |
+| ▲ ▼ | Scroll the page |
+| Ask | Ask now, without waiting for the pen to rest |
+| New | Start a fresh page and conversation |
+| Close | Leave PilotChat |
+
+**Put it in your note:** when you have written something, **Close** and **New** first offer to insert the conversation. **Insert** writes your handwriting as pen strokes and the answers as text boxes on new pages after the one you were on, each question and answer labelled **Q** and **A**. **Keep writing** goes back to the page. Nothing goes into the note unless you choose Insert.
+
+- On **Close**, **Not now** closes without inserting. Reopen PilotChat and the conversation is still there.
+- On **New**, **Discard** starts a fresh page and the old conversation is gone.
+- After an Insert from Close, carry on and Insert again in the same note: the copy you inserted is replaced by the whole conversation, in the same place. If that copy has changed since (you wrote on it, or its pages moved), it is left alone and the new one is added after the page you are on.
+
+**What it needs:** PilotChat answers with the key you set up for Copilot, so set Copilot up first. It reads your handwriting as an image, so it needs Anthropic, OpenAI or Gemini; DeepSeek is text-only and can't. With no key, locked keys, or DeepSeek, PilotChat opens to a message saying what to do instead of the writing page.
+
+**What it sends:** an image of the question you just wrote, cropped to your writing, plus the earlier questions and answers of the conversation as text. Nothing else from the note.
+
+PilotChat is inspired by [Penombra](https://penombra.ai/), which we first saw in Kit Betts-Masters' video [I Tried the AI Everyone is Talking About on E-Ink](https://www.youtube.com/watch?v=ZiOH4SYW0Ao). See [Credits](#credits).
 
 ## Grill Me — active recall from PDF/EPUB
 
@@ -190,6 +226,8 @@ The plugin sends two things to the configured provider on each chat send:
 
 There is no "PII redaction" toggle. On a vision-capable provider the page image carries everything that's visibly on the page, so scrubbing emails or numbers from the text payload while shipping the full screenshot would be theatre. On DeepSeek (text-only) the plugin silently scrubs emails and 7+ digit runs from the outbound text, since that's the one path where redaction actually reduces what we ship.
 
+**PilotChat** sends an image of each handwritten question, cropped to the writing, plus the conversation so far as text. It does not send the note's pages.
+
 Be deliberate about which page is open before tapping Copilot. If the page contains something you wouldn't paste into a third-party chat box, don't tap.
 
 ### A note on shared filesystem access between plugins
@@ -258,6 +296,11 @@ npm run lint
 ```
 
 The Jest config enforces a 97% threshold on statements / branches / functions / lines globally. Current measured coverage sits at ~99% statements / 98% branches.
+
+## Credits
+
+- **PilotChat** is inspired by [Penombra](https://penombra.ai/), an AI that answers on the page of an e-ink tablet. This project is not affiliated with Penombra.
+- Thanks to the [Kit Betts-Masters YouTube channel](https://www.youtube.com/@kitbetts-masters) for introducing Penombra in [I Tried the AI Everyone is Talking About on E-Ink](https://www.youtube.com/watch?v=ZiOH4SYW0Ao).
 
 ## License
 

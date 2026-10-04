@@ -6,7 +6,8 @@
 //   .note         → PluginFileAPI.generateNotePng + getElements +
 //                   recognizeElements (typed text + handwriting OCR).
 //   .pdf / .epub  → PluginDocAPI.generateCurrentDocImage +
-//                   getCurrentDocText.
+//                   getCurrentDocText, with the page's handwriting
+//                   (its mark layer) drawn over the render.
 // Other extensions are logged and skipped so the chat degrades
 // gracefully to text-only mode without claiming context it doesn't
 // have.
@@ -68,6 +69,23 @@ export type ManagerLike = {
   getPluginDirPath: () => Promise<string | null | undefined>;
 };
 
+// Handwriting on a PDF/EPUB page is stored in the document's mark file,
+// not in the document, so generateCurrentDocImage never draws it. These
+// render that layer (ink on a transparent background, in the same frame
+// as the page render) and lay it over the page render.
+export type PenLayerDeps = {
+  // Resolves to the page indices that carry handwriting.
+  getMarkPages: (docPath: string) => Promise<unknown>;
+  generateMarkThumbnails: (
+    docPath: string,
+    page: number,
+    pngPath: string,
+    size: {width: number; height: number},
+  ) => Promise<unknown>;
+  // Draws overlayPath over basePath in place; false leaves basePath as it was.
+  overlayPng: (basePath: string, overlayPath: string) => Promise<boolean>;
+};
+
 export type Logger = {
   log: (msg: string) => void;
   warn: (msg: string) => void;
@@ -86,6 +104,9 @@ export type CaptureDeps = {
   // scratch PNG is removed as soon as its bytes are in memory — the
   // rendered page never persists on disk beyond the capture call.
   deleteFile?: (path: string) => Promise<boolean>;
+  // Optional like deleteFile. Without it a doc capture sends the page
+  // render alone, as before pen-layer support.
+  penLayer?: PenLayerDeps;
 };
 
 // Each capture writes to a unique scratch path so two captures kicked
@@ -406,6 +427,69 @@ const captureNotePage = async (
   };
 };
 
+// True when the page is listed in getMarkPages' result.
+const pageHasHandwriting = (raw: unknown, page: number): boolean => {
+  if (!raw || typeof raw !== 'object') {
+    return false;
+  }
+  const r = (raw as {result?: unknown}).result;
+  return Array.isArray(r) && r.includes(page);
+};
+
+// Lays the page's handwriting over the page render at pngPath. Returns
+// whether it did. Best-effort like the text path: on any failure the
+// page render is sent as it is, so the capture never gets worse than
+// it was without this step.
+const overlayPenLayer = async (
+  deps: CaptureDeps,
+  docPath: string,
+  page: number,
+  pngPath: string,
+  size: {width: number; height: number},
+  logger: Logger,
+): Promise<boolean> => {
+  const pen = deps.penLayer;
+  if (pen === undefined) {
+    return false;
+  }
+  try {
+    if (!pageHasHandwriting(await pen.getMarkPages(docPath), page)) {
+      return false;
+    }
+  } catch (e) {
+    logger.warn(`${TAG} getMarkPages threw: ${(e as Error).message} — pen layer skipped`);
+    return false;
+  }
+
+  const markPath = await resolveScratchPath(deps.manager, logger);
+  if (markPath === null) {
+    return false;
+  }
+  try {
+    const rendered = await pen.generateMarkThumbnails(docPath, page, markPath, size);
+    if (
+      !rendered ||
+      typeof rendered !== 'object' ||
+      (rendered as {success?: unknown}).success !== true
+    ) {
+      logger.warn(`${TAG} generateMarkThumbnails failed: ${JSON.stringify(rendered)}`);
+      return false;
+    }
+    const composited = await pen.overlayPng(pngPath, markPath);
+    if (!composited) {
+      logger.warn(`${TAG} overlayPng failed — sending the page without its handwriting`);
+    }
+    return composited;
+  } catch (e) {
+    logger.warn(`${TAG} pen layer threw: ${(e as Error).message} — pen layer skipped`);
+    return false;
+  } finally {
+    // The mark render shows the user's handwriting: same no-persist
+    // policy as the page render.
+    await discardScratch(deps, markPath, logger);
+  }
+};
+
 const captureDocPage = async (
   deps: CaptureDeps,
   docPath: string,
@@ -443,6 +527,8 @@ const captureDocPage = async (
     return null;
   }
 
+  const penLayer = await overlayPenLayer(deps, docPath, page, pngPath, size, logger);
+
   const png = await readPngAsBase64(fetchFn, pngPath, logger);
   // Same policy as the note path: the rendered page never persists
   // on disk beyond the capture call.
@@ -466,12 +552,12 @@ const captureDocPage = async (
   logger.log(
     `${TAG} captured doc=${docPath} page=${page} ` +
       `bytes=${png.byteLength} base64.length=${png.base64.length} ` +
-      `pageText.length=${pageText.length}`,
+      `pageText.length=${pageText.length} penLayer=${penLayer}`,
   );
   infoLog(
     `${TAG} capture-doc kind=doc page=${page} ` +
       `pngBytes=${png.byteLength} base64.length=${png.base64.length} ` +
-      `pageText.length=${pageText.length}`,
+      `pageText.length=${pageText.length} penLayer=${penLayer}`,
   );
   return {
     notePath: docPath,
