@@ -10,8 +10,8 @@
  *      production).
  *
  * `deriveKey` is async and only runs through the native bridge.
- * Tests mock that bridge to delegate to noble's pbkdf2 so round-
- * trips work; production-side @noble/hashes is dev-only.
+ * Tests mock that bridge to delegate to Node's native pbkdf2 so
+ * round-trips work.
  */
 const mockCryptoPbkdf2 = jest.fn<
   Promise<{success: boolean; code: string; message: string; bytesB64?: string}>,
