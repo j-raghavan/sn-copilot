@@ -4,8 +4,11 @@
 // `CopilotOverlay.cryptoRandomBytes` and treats failure as a hard
 // error (no JS fallback — see kdf.ts / randomBytes.ts headers). Tests
 // mock the bridge with these implementations so round-trips through
-// the real key-derivation + AES path still work without dragging
-// @noble/hashes into the production bundle.
+// the real key-derivation + AES path still work. PBKDF2 runs on Node's
+// native implementation, as the device runs it on the JDK's: the vault's
+// 100,000 iterations in pure JS cost seconds per derivation on a shared
+// CI runner, enough to push tests that derive several keys past Jest's
+// 5 s timeout.
 //
 // IMPORTANT: do NOT import from this file at the top of a test. The
 // jest.mock() factory is hoisted before normal imports, so use
@@ -24,9 +27,7 @@
 //     };
 //   });
 
-import {pbkdf2} from '@noble/hashes/pbkdf2.js';
-import {sha256} from '@noble/hashes/sha2.js';
-import {randomBytes as nodeRandomBytes} from 'crypto';
+import {pbkdf2Sync, randomBytes as nodeRandomBytes} from 'crypto';
 
 export type MockCryptoResult = {
   success: boolean;
@@ -43,7 +44,7 @@ export const cryptoPbkdf2Sha256MockImpl = async (
 ): Promise<MockCryptoResult> => {
   const pwd = Buffer.from(passwordUtf8B64, 'base64');
   const salt = Buffer.from(saltB64, 'base64');
-  const key = pbkdf2(sha256, pwd, salt, {c: iterations, dkLen: keyLengthBytes});
+  const key = pbkdf2Sync(pwd, salt, iterations, keyLengthBytes, 'sha256');
   return {
     success: true,
     code: 'OK',
