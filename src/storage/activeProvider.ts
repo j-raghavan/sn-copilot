@@ -10,6 +10,7 @@
 //   6. default_provider names a missing file → 'none'.
 
 import type {KeyFile, ProviderId, ProviderResolution} from '../types';
+import type {AppState} from './appState';
 
 export const resolveActiveProvider = (files: KeyFile[]): ProviderResolution => {
   if (files.length === 0) {
@@ -62,4 +63,24 @@ export const resolveActiveProvider = (files: KeyFile[]): ProviderResolution => {
     active,
     others: files.filter(f => f.provider !== wanted),
   };
+};
+
+// The key file to talk to the provider with, in the key store's current
+// state: none while the state is loading, locked, mid-merge or has no key,
+// and none when the key files don't resolve to one active provider.
+export const activeKeyFromState = (
+  state: AppState | null,
+): KeyFile | undefined => {
+  if (
+    state === null ||
+    !(
+      state.kind === 'unlocked' ||
+      state.kind === 'plaintext' ||
+      state.kind === 'migrate'
+    )
+  ) {
+    return undefined;
+  }
+  const r = resolveActiveProvider(state.files);
+  return r.kind === 'ok' ? r.active : undefined;
 };

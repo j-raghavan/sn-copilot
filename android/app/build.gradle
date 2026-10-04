@@ -247,4 +247,7 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    // Pure-Kotlin unit tests (the PilotChat page model), run with ./gradlew testDebugUnitTest.
+    testImplementation("junit:junit:4.13.2")
 }

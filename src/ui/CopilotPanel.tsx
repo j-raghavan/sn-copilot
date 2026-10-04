@@ -18,7 +18,7 @@
  */
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import CopilotOverlay from '../native/CopilotOverlay';
-import {resolveActiveProvider} from '../storage/activeProvider';
+import {activeKeyFromState} from '../storage/activeProvider';
 import {readCustomActions} from '../storage/customActionsFile';
 import {readPersona} from '../storage/personaFile';
 import {setHasSeenSettings} from '../storage/prefs';
@@ -387,21 +387,3 @@ function GrillScreen(props: GrillScreenProps): React.JSX.Element {
     />
   );
 }
-
-const activeKeyFromState = (
-  state: ReturnType<typeof useCopilotState>['state'],
-): KeyFile | undefined => {
-  if (state === null) {
-    return undefined;
-  }
-  let files: KeyFile[];
-  if (state.kind === 'unlocked') {
-    files = state.files;
-  } else if (state.kind === 'plaintext' || state.kind === 'migrate') {
-    files = state.files;
-  } else {
-    return undefined;
-  }
-  const r = resolveActiveProvider(files);
-  return r.kind === 'ok' ? r.active : undefined;
-};

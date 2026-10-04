@@ -3,7 +3,7 @@
  *   1. AppRegistry registers both the App component and the
  *      SnCopilotPanel overlay component.
  *   2. PluginManager.init runs and the plugin router is installed.
- *   3. Sidebar button is registered with the expected scopes + id.
+ *   3. Sidebar buttons are registered with the expected scopes + ids.
  *   4. On a sidebar press: capture is fired-and-forget, the resulting
  *      promise is handed to setPageContextPromise, and the overlay
  *      opens with geometry computed from the live screen size.
@@ -16,6 +16,8 @@
  *      deps carry a deleteFile bridge.
  *   9. The capture deps carry pen-layer bridges to PluginFileAPI's mark
  *      APIs and to CopilotOverlay.overlayPng.
+ *  10. The PilotChat button is registered for notes only, as a full-screen
+ *      plugin view.
  */
 
 const registerButtonListenerCalls: Array<{
@@ -311,14 +313,27 @@ describe('index.js bootstrap', () => {
     expect(registerButtonListenerCalls).toHaveLength(1);
   });
 
-  it('registers the sidebar button with the expected scopes and id', () => {
+  it('registers the Copilot and PilotChat sidebar buttons', () => {
     importBootstrap();
-    expect(mockRegisterButton).toHaveBeenCalledTimes(1);
-    const [type, scopes, opts] = mockRegisterButton.mock.calls[0];
-    expect(type).toBe(1);
-    expect(scopes).toEqual(['NOTE', 'DOC']);
-    expect((opts as {id: number}).id).toBe(100);
-    expect((opts as {showType: number}).showType).toBe(0);
+    expect(mockRegisterButton).toHaveBeenCalledTimes(2);
+    const byId = new Map(
+      mockRegisterButton.mock.calls.map(([type, scopes, opts]) => [
+        (opts as {id: number}).id,
+        {type, scopes, opts: opts as {showType: number; regionType?: number}},
+      ]),
+    );
+    // Copilot: headless on notes and documents, drawing its own overlay.
+    expect(byId.get(100)).toMatchObject({
+      type: 1,
+      scopes: ['NOTE', 'DOC'],
+      opts: {showType: 0},
+    });
+    // PilotChat: notes only, the plugin's own full-screen view.
+    expect(byId.get(400)).toMatchObject({
+      type: 1,
+      scopes: ['NOTE'],
+      opts: {showType: 1, regionType: 3},
+    });
   });
 
   it('on sidebar press: captures page, hands promise to pageContext, opens overlay with computed geometry', async () => {

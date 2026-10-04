@@ -4,10 +4,12 @@ import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
+import com.sncopilot.pilotchat.PilotChatPageViewManager
 
 /**
  * CopilotOverlayPackage — registers CopilotOverlayModule with React
- * Native so JS can call NativeModules.CopilotOverlay.{open,move,close}.
+ * Native so JS can call NativeModules.CopilotOverlay.{open,move,close},
+ * and the PilotChat's native page as `<PilotChatPageView>`.
  *
  * Discovered automatically by buildPlugin.sh's
  * find_manual_react_packages_from_application parser, which scans
@@ -19,5 +21,5 @@ class CopilotOverlayPackage : ReactPackage {
       listOf(CopilotOverlayModule(reactContext))
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
-      emptyList()
+      listOf(PilotChatPageViewManager())
 }

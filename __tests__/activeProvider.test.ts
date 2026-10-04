@@ -8,8 +8,13 @@
  *   4. Multiple files, conflicting default_provider → 'ambiguous'.
  *   5. Multiple files, single default_provider → that provider.
  *   6. Multiple files, default_provider names absent provider → 'none'.
+ *   7. activeKeyFromState yields a key only in states that hold usable
+ *      key files, and only when they resolve to one provider.
  */
-import {resolveActiveProvider} from '../src/storage/activeProvider';
+import {
+  activeKeyFromState,
+  resolveActiveProvider,
+} from '../src/storage/activeProvider';
 import type {KeyFile} from '../src/types';
 
 const makeFile = (overrides: Partial<KeyFile> = {}): KeyFile => ({
@@ -108,5 +113,41 @@ describe('resolveActiveProvider', () => {
     if (r.kind === 'ok') {
       expect(r.active.provider).toBe('openai');
     }
+  });
+});
+
+describe('activeKeyFromState', () => {
+  const file = makeFile();
+
+  it.each([
+    ['plaintext', {kind: 'plaintext' as const, files: [file]}],
+    ['migrate', {kind: 'migrate' as const, files: [file]}],
+    ['unlocked', {kind: 'unlocked' as const, files: [file]}],
+  ])('returns the active key when %s', (_l, state) => {
+    expect(activeKeyFromState(state)).toBe(file);
+  });
+
+  it.each([
+    ['loading', null],
+    ['no-key', {kind: 'no-key' as const}],
+    ['locked', {kind: 'locked' as const}],
+    [
+      'merge',
+      {
+        kind: 'merge' as const,
+        vaultExists: true as const,
+        plaintextFiles: [file],
+      },
+    ],
+  ])('returns undefined when %s', (_l, state) => {
+    expect(activeKeyFromState(state)).toBeUndefined();
+  });
+
+  it('returns undefined when the files do not resolve to one provider', () => {
+    const state = {
+      kind: 'plaintext' as const,
+      files: [file, makeFile({provider: 'openai', model: 'gpt-5'})],
+    };
+    expect(activeKeyFromState(state)).toBeUndefined();
   });
 });

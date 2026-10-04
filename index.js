@@ -12,6 +12,7 @@ import {
 import {
   installPluginRouter,
   subscribeToButtonEvents,
+  BUTTON_ID_PILOTCHAT,
   BUTTON_ID_SIDEBAR,
   BUTTON_TYPE_SIDEBAR,
 } from './src/pluginRouter';
@@ -32,6 +33,12 @@ import {installSecureLifecycle} from './src/storage/lifecycleWiring';
 // view, and we draw our own overlay via the native TurboModule.
 const SHOW_TYPE_HEADLESS = 0;
 
+// The PilotChat opens as the plugin's own full-screen view, as sn-canvas's
+// canvas does, so its native page can claim the firmware pen.
+// regionType 3 = "Fullscreen display, won't dismiss" (NativePluginManager.d.ts).
+const SHOW_TYPE_WITH_UI = 1;
+const REGION_TYPE_FULLSCREEN_PERSISTENT = 3;
+
 // Localized button name as JSON, per the SDK's i18n convention.
 const localizedName = () =>
   JSON.stringify({
@@ -40,6 +47,15 @@ const localizedName = () =>
     zh_TW: '助手',
     ja: 'コパイロット',
     de: 'Copilot',
+  });
+
+const localizedPilotChatName = () =>
+  JSON.stringify({
+    en: 'PilotChat',
+    zh_CN: 'PilotChat',
+    zh_TW: 'PilotChat',
+    ja: 'PilotChat',
+    de: 'PilotChat',
   });
 
 // Right-docked panel geometry. Computed at runtime from the actual
@@ -261,4 +277,13 @@ PluginManager.registerButton(BUTTON_TYPE_SIDEBAR, ['NOTE', 'DOC'], {
   name: localizedName(),
   icon: Image.resolveAssetSource(require('./assets/copilot_icon.png')).uri,
   showType: SHOW_TYPE_HEADLESS,
+});
+
+// PilotChat writes into notebooks: Notes only.
+PluginManager.registerButton(BUTTON_TYPE_SIDEBAR, ['NOTE'], {
+  id: BUTTON_ID_PILOTCHAT,
+  name: localizedPilotChatName(),
+  icon: Image.resolveAssetSource(require('./assets/pilotchat_icon.png')).uri,
+  showType: SHOW_TYPE_WITH_UI,
+  regionType: REGION_TYPE_FULLSCREEN_PERSISTENT,
 });
